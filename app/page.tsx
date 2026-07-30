@@ -6,6 +6,8 @@ import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import {
   Phone,
   MapPin,
@@ -33,6 +35,7 @@ import { Footer } from "@/components/ui/footer-section"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
 import type { Session } from "@supabase/supabase-js"
 import { TextEffect } from "@/components/ui/text-effect"
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 
 export default function HomePage() {
   const router = useRouter()
@@ -111,6 +114,29 @@ export default function HomePage() {
   const toggleTheme = () => {
     setTheme(theme === "dark" ? "light" : "dark")
   }
+
+  const faqItems = [
+    {
+      question: "What is CareBridge?",
+      answer: "CareBridge is a digital healthcare platform that helps patients connect with certified doctors, manage records, and access care securely from anywhere.",
+    },
+    {
+      question: "How do I book a consultation?",
+      answer: "You can sign in, choose a consultation option, and select a suitable time for your appointment from the booking flow on the site.",
+    },
+    {
+      question: "Is my information secure?",
+      answer: "Yes. CareBridge uses secure access controls and encrypted sessions to help protect patient information and support trusted digital care.",
+    },
+    {
+      question: "Can I access my records online?",
+      answer: "Yes. Patients can view medical records, prescriptions, and care history through the platform when available in their account.",
+    },
+    {
+      question: "Who can use CareBridge?",
+      answer: "CareBridge is designed for patients, doctors, and care teams who want a streamlined and connected way to manage healthcare services.",
+    },
+  ]
 
   return (
     <div className="min-h-screen bg-background">
@@ -216,6 +242,61 @@ export default function HomePage() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="about" className="px-4 py-8">
+        <div className="container mx-auto">
+          <div className="mb-8 text-center">
+            <h3 className="text-2xl font-bold">About CareBridge</h3>
+            <p className="mx-auto mt-2 max-w-2xl text-sm text-muted-foreground">
+              CareBridge brings accessible, secure, and technology-driven healthcare services together in one connected platform.
+            </p>
+          </div>
+
+          <div className="grid gap-6 md:grid-cols-3">
+            <Card className="border-primary/20">
+              <CardHeader>
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                  <Shield className="h-5 w-5 text-primary" />
+                </div>
+                <CardTitle className="text-xl">Mission</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Provide accessible, secure, and technology-driven healthcare services that support better outcomes for every community.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card className="border-secondary/20">
+              <CardHeader>
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-secondary/10">
+                  <Stethoscope className="h-5 w-5 text-secondary" />
+                </div>
+                <CardTitle className="text-xl">Vision</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Bridge the gap between patients and healthcare professionals through digital solutions that are inclusive and reliable.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card className="border-muted-foreground/20">
+              <CardHeader>
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent/10">
+                  <Users className="h-5 w-5 text-accent" />
+                </div>
+                <CardTitle className="text-xl">Trusted Care</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Deliver connected care experiences backed by secure consultations, clear communication, and dependable support.
+                </p>
+              </CardContent>
+            </Card>
           </div>
         </div>
       </section>
@@ -394,20 +475,20 @@ export default function HomePage() {
         <div className="container mx-auto">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
             <div>
-              <div className="text-2xl font-bold text-primary">173</div>
-              <div className="text-sm text-muted-foreground">{t.villagesServed}</div>
+              <div className="text-2xl font-bold text-primary">10,000+</div>
+              <div className="text-sm text-muted-foreground">Patients Served</div>
             </div>
             <div>
-              <div className="text-2xl font-bold text-primary">11</div>
-              <div className="text-sm text-muted-foreground">{t.doctorsAvailable}</div>
+              <div className="text-2xl font-bold text-primary">250+</div>
+              <div className="text-sm text-muted-foreground">Verified Doctors</div>
             </div>
             <div>
-              <div className="text-2xl font-bold text-primary">24/7</div>
-              <div className="text-sm text-muted-foreground">{t.support24x7}</div>
+              <div className="text-2xl font-bold text-primary">24×7</div>
+              <div className="text-sm text-muted-foreground">24×7 Support</div>
             </div>
             <div>
-              <div className="text-2xl font-bold text-primary">31%</div>
-              <div className="text-sm text-muted-foreground">Internet Coverage</div>
+              <div className="text-2xl font-bold text-primary">98%</div>
+              <div className="text-sm text-muted-foreground">Patient Satisfaction</div>
             </div>
           </div>
         </div>
@@ -426,8 +507,8 @@ export default function HomePage() {
                   <Star className="h-4 w-4 fill-current" />
                   <Star className="h-4 w-4 fill-current" />
                 </div>
-                <p className="text-sm text-muted-foreground">“Doctor spoke in Punjabi and helped me get the right medicines the same day.”</p>
-                <p className="mt-3 text-xs font-medium">– Patient testimonial</p>
+                <p className="text-sm text-muted-foreground">“The virtual consultation felt personal and professional, and I had a clear care plan within minutes.”</p>
+                <p className="mt-3 text-xs font-medium">– Sarah L., Patient</p>
               </CardContent>
             </Card>
             <Card>
@@ -439,8 +520,8 @@ export default function HomePage() {
                   <Star className="h-4 w-4 fill-current" />
                   <Star className="h-4 w-4 fill-current" />
                 </div>
-                <p className="text-sm text-muted-foreground">“Low-bandwidth calls worked even on my 3G phone. Very easy to use.”</p>
-                <p className="mt-3 text-xs font-medium">– Community Health Worker</p>
+                <p className="text-sm text-muted-foreground">“I appreciated the secure follow-up and the ability to review my records and prescriptions in one place.”</p>
+                <p className="mt-3 text-xs font-medium">– Daniel R., Patient</p>
               </CardContent>
             </Card>
             <Card>
@@ -452,11 +533,36 @@ export default function HomePage() {
                   <Star className="h-4 w-4 fill-current" />
                   <Star className="h-4 w-4 fill-current" />
                 </div>
-                <p className="text-sm text-muted-foreground">“E‑prescriptions with QR codes are convenient for our pharmacy counter.”</p>
-                <p className="mt-3 text-xs font-medium">– Local Pharmacist</p>
+                <p className="text-sm text-muted-foreground">“CareBridge helps our clinic coordinate care more efficiently while keeping communication clear for patients.”</p>
+                <p className="mt-3 text-xs font-medium">– Dr. Amina Khan, Primary Care Physician</p>
               </CardContent>
             </Card>
           </div>
+        </div>
+      </section>
+
+      <section className="px-4 py-12 bg-muted/30">
+        <div className="container mx-auto">
+          <div className="mb-8 text-center">
+            <h3 className="text-2xl font-bold">Frequently Asked Questions</h3>
+            <p className="mx-auto mt-2 max-w-2xl text-sm text-muted-foreground">
+              Everything you need to know about using CareBridge for secure, connected healthcare.
+            </p>
+          </div>
+          <Card>
+            <CardContent className="pt-6">
+              <Accordion type="single" collapsible className="w-full">
+                {faqItems.map((item) => (
+                  <AccordionItem key={item.question} value={item.question}>
+                    <AccordionTrigger className="text-left text-base font-semibold">
+                      {item.question}
+                    </AccordionTrigger>
+                    <AccordionContent>{item.answer}</AccordionContent>
+                  </AccordionItem>
+                ))}
+              </Accordion>
+            </CardContent>
+          </Card>
         </div>
       </section>
 
@@ -498,6 +604,60 @@ export default function HomePage() {
               </div>
             </CardContent>
           </Card>
+        </div>
+      </section>
+
+      <section className="px-4 py-12">
+        <div className="container mx-auto">
+          <div className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
+            <Card className="border-primary/20">
+              <CardHeader>
+                <CardTitle className="text-2xl">Contact Us</CardTitle>
+                <CardDescription>
+                  Reach out to our team for support, inquiries, or assistance with your CareBridge experience.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4 text-sm text-muted-foreground">
+                <div>
+                  <p className="font-medium text-foreground">Email</p>
+                  <p>support@carebridge.com</p>
+                </div>
+                <div>
+                  <p className="font-medium text-foreground">Phone</p>
+                  <p>+1 (555) 010-2048</p>
+                </div>
+                <div>
+                  <p className="font-medium text-foreground">Address</p>
+                  <p>450 Care Avenue, Suite 300, San Francisco, CA</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-xl">Send a message</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <form className="space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium" htmlFor="name">Name</label>
+                      <Input id="name" placeholder="Your name" />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium" htmlFor="email">Email</label>
+                      <Input id="email" type="email" placeholder="you@example.com" />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium" htmlFor="message">Message</label>
+                    <Textarea id="message" placeholder="How can we help?" className="min-h-[120px]" />
+                  </div>
+                  <Button type="button" className="w-full sm:w-auto">Send</Button>
+                </form>
+              </CardContent>
+            </Card>
+          </div>
         </div>
       </section>
 

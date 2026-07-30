@@ -2,7 +2,7 @@
 import React from 'react';
 import type { ComponentProps, ReactNode } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
-import { FacebookIcon, Heart, InstagramIcon, LinkedinIcon, YoutubeIcon } from 'lucide-react';
+import { FacebookIcon, Heart, InstagramIcon, LinkedinIcon, Mail, MapPin, Phone, YoutubeIcon } from 'lucide-react';
 
 interface FooterLink {
 	title: string;
@@ -17,6 +17,15 @@ interface FooterSection {
 
 const footerLinks: FooterSection[] = [
 	{
+		label: 'Quick Links',
+		links: [
+			{ title: 'About Us', href: '#about' },
+			{ title: 'Features', href: '#features' },
+			{ title: 'How It Works', href: '#how-it-works' },
+			{ title: 'Contact', href: '#' },
+		],
+	},
+	{
 		label: 'Services',
 		links: [
 			{ title: 'Video Consultations', href: '/consultation' },
@@ -26,25 +35,15 @@ const footerLinks: FooterSection[] = [
 		],
 	},
 	{
-		label: 'Company',
+		label: 'Contact Information',
 		links: [
-			{ title: 'About Us', href: '/about' },
-			{ title: 'Privacy Policy', href: '/privacy' },
-			{ title: 'Terms of Service', href: '/terms' },
-			{ title: 'Contact', href: '/contact' },
+			{ title: 'support@carebridge.com', href: 'mailto:support@carebridge.com', icon: Mail },
+			{ title: '+1 (555) 010-2048', href: 'tel:+15550102048', icon: Phone },
+			{ title: '450 Care Avenue, Suite 300, San Francisco, CA', href: '#', icon: MapPin },
 		],
 	},
 	{
-		label: 'Support',
-		links: [
-			{ title: 'Help Center', href: '/help' },
-			{ title: 'Emergency Services', href: '/emergency' },
-			{ title: 'Appointments', href: '/appointments' },
-			{ title: 'Profile', href: '/profile' },
-		],
-	},
-	{
-		label: 'Connect',
+		label: 'Social Media',
 		links: [
 			{ title: 'Facebook', href: '#', icon: FacebookIcon },
 			{ title: 'Instagram', href: '#', icon: InstagramIcon },
@@ -70,7 +69,7 @@ export function Footer() {
 						Supporting communities with connected services and modern tools.
 					</p>
 					<p className="text-muted-foreground mt-8 text-sm md:mt-4">
-						© {new Date().getFullYear()} CareBridge. All rights reserved.
+						© 2026 CareBridge. All Rights Reserved.
 					</p>
 				</AnimatedContainer>
 
