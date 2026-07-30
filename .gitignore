@@ -1,0 +1,50 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files
+.env*
+!.env.example
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+
+# markdown files (except README.md)
+*.md
+!README.md
+
+# test files
+*.test.js
+*.test.jsx
+*.test.ts
+*.test.tsx
+**/tests/**
+**/__tests__/**
+test-*.js
+*-test.js
+supabase-connection-test.js
+validate-implementation.js
+simple-validate.js
+setup-database.js
+
+3b9093df-df8b-4eb2-8ee5-d3fce754197f.mp4
+CLI_USAGE.md
+LOGOUT_FIX_DOCUMENTATION.md
+3b9093df-df8b-4eb2-8ee5-d3fce754197f
