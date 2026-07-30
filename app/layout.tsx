@@ -10,8 +10,8 @@ import { ErrorBoundary } from '@/components/error-boundary'
 import { Toaster } from '@/components/ui/toaster'
 
 export const metadata: Metadata = {
-  title: 'Healthcare Webapp',
-  description: 'Complete telemedicine platform for online consultations, medical records, and healthcare services',
+  title: 'CareBridge',
+  description: 'CareBridge is a modern digital healthcare platform for secure consultations, medical records, and connected care.',
   generator: 'Next.js',
 }
 

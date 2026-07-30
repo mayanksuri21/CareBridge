@@ -13,7 +13,7 @@ function PrescriptionPDF({ presc, items }: any) {
   return (
     <Document>
       <Page size="A4" style={styles.page}>
-        <Text style={styles.header}>HealthConnect e‑Prescription</Text>
+        <Text style={styles.header}>CareBridge e‑Prescription</Text>
         <View style={styles.section}>
           <Text>Prescription ID: {presc.id}</Text>
           <Text>Date: {new Date(presc.created_at).toLocaleString()}</Text>

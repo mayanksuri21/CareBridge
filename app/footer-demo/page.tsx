@@ -6,7 +6,7 @@ export default function FooterDemo() {
 			<div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800">
 				<div className="text-center space-y-4">
 					<h1 className="font-mono text-4xl font-bold text-gray-800 dark:text-white">
-						HealthConnect Platform
+						CareBridge Platform
 					</h1>
 					<p className="text-lg text-gray-600 dark:text-gray-300">
 						Scroll down to see the footer!

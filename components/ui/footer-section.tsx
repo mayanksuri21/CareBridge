@@ -63,14 +63,14 @@ export function Footer() {
 				<AnimatedContainer className="space-y-4">
 					<div className="flex items-center gap-2">
 						<Heart className="size-8 text-red-500 fill-current" />
-						<span className="text-xl font-bold">HealthConnect</span>
+						<span className="text-xl font-bold">CareBridge</span>
 					</div>
 					<p className="text-muted-foreground text-sm max-w-sm">
-						Bridging healthcare gaps in rural communities through innovative telemedicine solutions.
-						Serving 173+ villages around Nabha, Punjab.
+						Bridging healthcare gaps through secure, accessible digital care experiences.
+						Supporting communities with connected services and modern tools.
 					</p>
 					<p className="text-muted-foreground mt-8 text-sm md:mt-4">
-						© {new Date().getFullYear()} HealthConnect. All rights reserved.
+						© {new Date().getFullYear()} CareBridge. All rights reserved.
 					</p>
 				</AnimatedContainer>
 

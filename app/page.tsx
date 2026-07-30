@@ -126,8 +126,8 @@ export default function HomePage() {
               <div className="w-9 h-9 bg-primary rounded-lg flex items-center justify-center shadow-sm">
                 <Phone className="w-4 h-4 text-primary-foreground" />
               </div>
-              <h1 className="text-xl font-bold text-foreground tracking-tight">HealthConnect</h1>
-              <Badge variant="secondary" className="ml-2 hidden sm:inline-flex">Nabha Rural Healthcare</Badge>
+              <h1 className="text-xl font-bold text-foreground tracking-tight">CareBridge</h1>
+              <Badge variant="secondary" className="ml-2 hidden sm:inline-flex">Bridging Healthcare</Badge>
             </div>
             <nav className="hidden md:flex items-center gap-6 text-sm text-muted-foreground">
               <a href="#features" className="hover:text-foreground transition-colors">{t.navFeatures}</a>
@@ -159,7 +159,7 @@ export default function HomePage() {
                 className="text-4xl md:text-5xl font-bold tracking-tight text-foreground text-balance"
                 delay={0.2}
               >
-                {t.healthcareAtFingerTips}
+                Healthcare at Your Fingertips
               </TextEffect>
               <TextEffect
                 per="char"
@@ -167,7 +167,7 @@ export default function HomePage() {
                 className="mt-4 text-lg text-muted-foreground max-w-xl"
                 delay={1}
               >
-                {t.healthcareDescription}
+                Book appointments, consult certified doctors online, manage medical records, and access quality healthcare securely from anywhere.
               </TextEffect>
               <div className="mt-6 flex flex-col sm:flex-row gap-3">
                 {session ? (
@@ -199,8 +199,8 @@ export default function HomePage() {
                 )}
               </div>
               <div className="mt-6 flex flex-wrap items-center gap-6 text-sm text-muted-foreground">
-                <div className="flex items-center gap-2"><MapPin className="h-4 w-4" /> 173 {t.villagesServed}</div>
-                <div className="flex items-center gap-2"><Users className="h-4 w-4" /> 11 {t.doctorsAvailable}</div>
+                <div className="flex items-center gap-2"><MapPin className="h-4 w-4" /> Serving Communities</div>
+                <div className="flex items-center gap-2"><Users className="h-4 w-4" /> Trusted Care Network</div>
                 <div className="flex items-center gap-2"><Clock className="h-4 w-4" /> {t.support24x7}</div>
               </div>
             </div>
@@ -348,7 +348,7 @@ export default function HomePage() {
 
       <section id="how-it-works" className="px-4 py-12 bg-muted/30">
         <div className="container mx-auto">
-          <h3 className="mb-8 text-center text-2xl font-bold">How HealthConnect works</h3>
+          <h3 className="mb-8 text-center text-2xl font-bold">How CareBridge works</h3>
           <div className="grid gap-6 md:grid-cols-4">
             <Card>
               <CardHeader>
@@ -427,7 +427,7 @@ export default function HomePage() {
                   <Star className="h-4 w-4 fill-current" />
                 </div>
                 <p className="text-sm text-muted-foreground">“Doctor spoke in Punjabi and helped me get the right medicines the same day.”</p>
-                <p className="mt-3 text-xs font-medium">– Patient from Nabha</p>
+                <p className="mt-3 text-xs font-medium">– Patient testimonial</p>
               </CardContent>
             </Card>
             <Card>
@@ -474,7 +474,7 @@ export default function HomePage() {
             </div>
             <Card>
               <CardContent className="pt-6">
-                <p className="text-sm text-muted-foreground">Need help getting started? Our team can assist clinics and local health workers to onboard to HealthConnect.</p>
+                <p className="text-sm text-muted-foreground">Need help getting started? Our team can assist clinics and care teams in onboarding to CareBridge.</p>
                 <div className="mt-4 flex flex-wrap gap-3">
                   <Link href="/login"><Button>Patient Login</Button></Link>
                   <Link href="/login"><Button variant="outline">Doctor Login</Button></Link>

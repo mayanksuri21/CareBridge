@@ -34,7 +34,8 @@ export function OnboardingForm({ user, onComplete }: OnboardingFormProps) {
     e.preventDefault()
     setLoading(true)
 
-    try {
+    try {
+
       if (!formData.name?.trim()) {
         toast({
           title: "Missing Name",
@@ -71,7 +72,8 @@ export function OnboardingForm({ user, onComplete }: OnboardingFormProps) {
         return
       }
 
-      console.log('Starting onboarding process with data:', { ...formData, userId: user.id })
+      console.log('Starting onboarding process with data:', { ...formData, userId: user.id })
+
       await createInitialProfile(user, {
         name: formData.name.trim(),
         phone: formData.phone.trim(),
@@ -80,16 +82,18 @@ export function OnboardingForm({ user, onComplete }: OnboardingFormProps) {
         specialty: formData.specialty?.trim() || ''
       })
 
-      console.log('Initial profile created, completing onboarding...')
+      console.log('Initial profile created, completing onboarding...')
+
       await completeOnboarding(user.id)
       
       console.log('Profile setup completed successfully')
 
       toast({
-        title: "Welcome to HealthConnect!",
+        title: "Welcome to CareBridge!",
         description: "Your profile has been set up successfully",
         duration: 3000
-      })
+      })
+
       onComplete()
       router.push('/profile')
     } catch (error) {
@@ -146,9 +150,9 @@ export function OnboardingForm({ user, onComplete }: OnboardingFormProps) {
               <X className="w-4 h-4" />
             </Button>
           </div>
-          <CardTitle className="text-2xl">Welcome to HealthConnect</CardTitle>
+          <CardTitle className="text-2xl">Welcome to CareBridge</CardTitle>
           <CardDescription>
-            Let's set up your profile to get started with our telemedicine platform
+            Let's set up your profile to get started with our digital healthcare platform
           </CardDescription>
         </CardHeader>
         <CardContent>

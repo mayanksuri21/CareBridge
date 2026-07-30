@@ -113,7 +113,7 @@ export const translations: Partial<Record<Language, Partial<Translations>>> = {
 
     healthcareAtFingerTips: "Healthcare at your fingertips",
     healthcareDescription:
-      "Connect with doctors, manage your health records, and get medical care from 173 villages around Nabha. Quality healthcare, now accessible to all.",
+      "Book appointments, consult certified doctors online, manage medical records, and access quality healthcare securely from anywhere.",
     villagesServed: "Villages Served",
     doctorsAvailable: "Doctors Available",
     support24x7: "24/7 Support",
@@ -126,9 +126,9 @@ export const translations: Partial<Record<Language, Partial<Translations>>> = {
     realTimeUpdates: "Real-time updates",
     lowBandwidthOptimized: "Optimized for low bandwidth",
     emergencyServices: "Emergency Services",
-    emergencyDescription: "For medical emergencies, contact Nabha Civil Hospital directly",
+    emergencyDescription: "For medical emergencies, contact local emergency services immediately",
     callEmergency: "Call Emergency: 108",
-  heroSecureTagline: "Secure, low-bandwidth telehealth for rural India",
+  heroSecureTagline: "Secure, modern telehealth for connected care",
   patientCta: "Patient: Get care now",
   doctorCta: "Doctor: Join as provider",
   videoPause: "Pause",
@@ -192,7 +192,7 @@ export const translations: Partial<Record<Language, Partial<Translations>>> = {
 
     healthcareAtFingerTips: "आपकी उंगलियों पर स्वास्थ्य सेवा",
     healthcareDescription:
-      "डॉक्टरों से जुड़ें, अपने स्वास्थ्य रिकॉर्ड प्रबंधित करें और नाभा के आसपास के 173 गांवों से देखभाल प्राप्त करें। गुणवत्तापूर्ण स्वास्थ्य सेवा अब सभी के लिए सुलभ।",
+      "ऑनलाइन अपॉइंटमेंट बुक करें, प्रमाणित डॉक्टरों से परामर्श करें, मेडिकल रिकॉर्ड प्रबंधित करें और सुरक्षित रूप से कहीं से भी गुणवत्तापूर्ण स्वास्थ्य सेवा प्राप्त करें।",
     villagesServed: "सेवित गाँव",
     doctorsAvailable: "उपलब्ध डॉक्टर",
     support24x7: "24/7 सहायता",
@@ -205,9 +205,9 @@ export const translations: Partial<Record<Language, Partial<Translations>>> = {
     realTimeUpdates: "रियल-टाइम अपडेट",
     lowBandwidthOptimized: "कम बैंडविड्थ के लिए अनुकूलित",
     emergencyServices: "आपातकालीन सेवाएँ",
-    emergencyDescription: "चिकित्सा आपातकाल के लिए, सीधे नाभा सिविल अस्पताल से संपर्क करें",
+    emergencyDescription: "चिकित्सा आपातकाल के लिए, तुरंत स्थानीय आपातकालीन सेवाओं से संपर्क करें",
     callEmergency: "आपातकालीन कॉल: 108",
-  heroSecureTagline: "ग्रामीण भारत के लिए सुरक्षित, कम-बैंडविड्थ टेलीहेल्थ",
+  heroSecureTagline: "कनेक्टेड केयर के लिए सुरक्षित, आधुनिक टेलीहेल्थ",
   patientCta: "मरीज: अभी देखभाल पाएं",
   doctorCta: "डॉक्टर: प्रदाता के रूप में जुड़ें",
   videoPause: "रोकें",

@@ -264,7 +264,7 @@ export default function ConsultationPage() {
           <Card className="mb-8">
             <CardHeader>
               <CardTitle>Start Your Consultation</CardTitle>
-              <CardDescription>Connect with qualified doctors from Nabha Civil Hospital</CardDescription>
+              <CardDescription>Connect with qualified doctors through our secure digital care platform</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               

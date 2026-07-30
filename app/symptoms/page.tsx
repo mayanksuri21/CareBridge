@@ -419,7 +419,7 @@ export default function SymptomsPage() {
                           className="border-red-300 text-red-800 hover:bg-red-100 bg-transparent"
                         >
                           <Phone className="w-4 h-4 mr-2" />
-                          Nabha Hospital: +91 98765 00000
+                          Local Care Center: +91 98765 00000
                         </Button>
                       </div>
                     </div>

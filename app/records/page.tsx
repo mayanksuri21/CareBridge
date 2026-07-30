@@ -175,7 +175,7 @@ export default function HealthRecordsPage() {
                       Patient ID: {showSensitiveInfo ? "HC001234" : "HC***234"} | Age: 35 | Male
                     </CardDescription>
                     <div className="flex items-center space-x-4 mt-2 text-sm text-muted-foreground">
-                      <span>Village: Nabha</span>
+                      <span>Location: Community Care</span>
                       <span>Phone: {showSensitiveInfo ? "+91 98765 43210" : "+91 ***65 ***10"}</span>
                     </div>
                   </div>

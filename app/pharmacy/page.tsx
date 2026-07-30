@@ -28,8 +28,8 @@ export default function PharmacyPage() {
   const pharmacies = [
     {
       id: "1",
-      name: "Nabha Medical Store",
-      address: "Main Market, Nabha",
+      name: "Community Medical Store",
+      address: "Main Market",
       phone: "+91 98765 12345",
       distance: "0.5 km",
       rating: 4.5,
@@ -39,7 +39,7 @@ export default function PharmacyPage() {
     {
       id: "2",
       name: "City Pharmacy",
-      address: "Civil Hospital Road, Nabha",
+      address: "Central Care Road",
       phone: "+91 98765 67890",
       distance: "1.2 km",
       rating: 4.2,
@@ -49,7 +49,7 @@ export default function PharmacyPage() {
     {
       id: "3",
       name: "Health Plus Pharmacy",
-      address: "Bus Stand, Nabha",
+      address: "Transit District",
       phone: "+91 98765 54321",
       distance: "2.1 km",
       rating: 4.0,
@@ -59,7 +59,7 @@ export default function PharmacyPage() {
     {
       id: "4",
       name: "Wellness Pharmacy",
-      address: "Patiala Road, Nabha",
+      address: "North Avenue",
       phone: "+91 98765 98765",
       distance: "3.5 km",
       rating: 4.3,
@@ -351,7 +351,7 @@ export default function PharmacyPage() {
                 <div>
                   <h3 className="font-semibold text-amber-800 mb-1">Emergency Medicine Request</h3>
                   <p className="text-sm text-amber-700 mb-3">
-                    Can't find a critical medicine? Contact Nabha Civil Hospital for emergency assistance or alternative
+                    Can't find a critical medicine? Contact your nearest care center for emergency assistance or alternative options
                     arrangements.
                   </p>
                   <Button

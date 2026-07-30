@@ -163,7 +163,7 @@ export default function AuthPage() {
               <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
                 <Stethoscope className="w-4 h-4 text-primary-foreground" />
               </div>
-              <h1 className="text-lg font-semibold">HealthConnect</h1>
+              <h1 className="text-lg font-semibold">CareBridge</h1>
             </div>
           </div>
         </div>
@@ -176,9 +176,9 @@ export default function AuthPage() {
               <div className="mx-auto w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center">
                 <Stethoscope className="w-6 h-6 text-primary" />
               </div>
-              <CardTitle className="text-2xl">Welcome to HealthConnect</CardTitle>
+              <CardTitle className="text-2xl">Welcome to CareBridge</CardTitle>
               <CardDescription>
-                Join our telemedicine platform serving rural communities
+                Join our digital healthcare platform for secure, connected care
               </CardDescription>
             </CardHeader>
             

@@ -1,21 +1,21 @@
-# 🏥 HealthConnect - Telemedicine Platform
+# 🏥 CareBridge - Digital Healthcare Platform
 
-**Bridging healthcare gaps in rural India through secure, accessible digital health solutions**
+**Bridging healthcare, empowering communities.**
 
-HealthConnect is a comprehensive telemedicine platform designed to provide quality healthcare access to rural communities, specifically serving 173+ villages around Nabha, Punjab. Our platform connects patients with qualified doctors through secure video consultations, digital health records management, and integrated pharmacy services.
+CareBridge is a modern digital healthcare platform designed to provide accessible, secure, and technology-driven care experiences for patients and healthcare professionals. Our platform connects people with certified doctors through secure consultations, digital health records, and integrated care services.
 
 ## 🎯 Mission & Vision
 
 ### Mission
-To democratize healthcare access in rural India by leveraging technology to connect patients with medical professionals, eliminating geographical barriers and ensuring timely medical care for underserved communities.
+Provide accessible, secure, and technology-driven healthcare services through a modern digital platform that connects patients with care professionals and supports better outcomes.
 
 ### Vision
-A future where every individual in rural India has seamless access to quality healthcare, regardless of their location, language, or technical literacy.
+Bridge the gap between patients and healthcare professionals using digital healthcare solutions that are inclusive, reliable, and easy to access.
 
 ## 🌟 Key Features
 
 ### 🩺 For Patients
-- **Secure Video Consultations** - Connect with qualified doctors from Nabha Civil Hospital
+- **Secure Video Consultations** - Connect with qualified doctors through a trusted digital care network
 - **Multi-language Support** - Available in Hindi, Punjabi, and English
 - **Digital Health Records** - Comprehensive medical history and prescription management
 - **AI-Powered Symptom Checker** - Preliminary health assessment and guidance
@@ -80,7 +80,7 @@ A future where every individual in rural India has seamless access to quality he
 ## 📊 Impact & Reach
 
 ### Current Statistics
-- **173+ Villages** served in the Nabha region
+- **Connected communities** supported through digital care delivery
 - **24/7 Availability** of medical consultations
 - **Multiple Specialties** including General Medicine, Pediatrics, Cardiology, Gynecology
 - **Multi-language Support** breaking communication barriers
@@ -156,6 +156,6 @@ Maps:         Leaflet for location services
 
 ---
 
-**Built with ❤️ for rural healthcare accessibility**
+**Built with ❤️ for accessible, modern healthcare experiences**
 
 *Empowering communities, one consultation at a time.*
