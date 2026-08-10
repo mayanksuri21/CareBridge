@@ -31,11 +31,23 @@ export async function getUserProfile(user: User): Promise<UserProfile | null> {
     return null
   }
 }
-export function getUserDisplayName(user: User, profile?: UserProfile | null): string {
-  if (profile?.name) return profile.name
-  if (user.user_metadata?.full_name) return user.user_metadata.full_name
-  if (user.user_metadata?.name) return user.user_metadata.name
-  return user.email || 'User'
+export function getUserDisplayName(
+  user: User,
+  profile?: UserProfile | null
+): string {
+  if (user.user_metadata?.full_name) {
+    return user.user_metadata.full_name
+  }
+
+  if (user.user_metadata?.name) {
+    return user.user_metadata.name
+  }
+
+  if (profile?.name && profile.name !== "User") {
+    return profile.name
+  }
+
+  return user.email || "User"
 }
 export function getUserAvatarUrl(profile?: UserProfile | null): string {
   return profile?.avatar_url || '/placeholder-user.jpg'

@@ -10,8 +10,13 @@ import { ErrorBoundary } from '@/components/error-boundary'
 import { Toaster } from '@/components/ui/toaster'
 
 export const metadata: Metadata = {
-  title: 'CareBridge',
-  description: 'CareBridge is a modern digital healthcare platform for secure consultations, medical records, and connected care.',
+  title: 'CareBridge | Secure Digital Healthcare',
+  description: 'CareBridge helps patients connect with certified doctors, manage records, and access trusted digital healthcare securely from anywhere.',
+  openGraph: {
+    title: 'CareBridge | Secure Digital Healthcare',
+    description: 'Connect with certified doctors, manage your medical records, and access trusted digital healthcare securely from anywhere.',
+    type: 'website',
+  },
   generator: 'Next.js',
 }
 

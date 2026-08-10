@@ -38,8 +38,8 @@ const footerLinks: FooterSection[] = [
 		label: 'Contact Information',
 		links: [
 			{ title: 'support@carebridge.com', href: 'mailto:support@carebridge.com', icon: Mail },
-			{ title: '+1 (555) 010-2048', href: 'tel:+15550102048', icon: Phone },
-			{ title: '450 Care Avenue, Suite 300, San Francisco, CA', href: '#', icon: MapPin },
+			{ title: '+91 98765 43210', href: 'tel:+919876543210', icon: Phone },
+			{ title: 'CareBridge Digital Healthcare, New Delhi, India', href: '#', icon: MapPin },
 		],
 	},
 	{
