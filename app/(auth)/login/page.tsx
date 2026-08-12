@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -32,10 +32,11 @@ type Role = "patient" | "doctor"
 
 export default function AuthPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const supabase = createSupabaseBrowserClient()
   const { t } = useLanguage()
   
-  const [role, setRole] = useState<Role>("patient")
+  const [role, setRole] = useState<Role>(() => searchParams.get("role") === "doctor" ? "doctor" : "patient")
   const [name, setName] = useState("")
   const [phone, setPhone] = useState("")
   const [email, setEmail] = useState("")
@@ -133,7 +134,7 @@ export default function AuthPage() {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
+          redirectTo: `${window.location.origin}/auth/callback?role=${role}`,
           queryParams: {
             access_type: 'offline',
             prompt: 'consent',

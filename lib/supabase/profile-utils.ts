@@ -38,8 +38,19 @@ export async function checkUserProfileStatus(userId: string) {
 export async function getPostLoginRedirect(userId: string): Promise<string> {
   const status = await checkUserProfileStatus(userId)
   
-  if (!status.hasProfile || !status.isComplete) {
+  if (!status.hasProfile || !status.isComplete) {
     return '/profile'
-  }
+  }
+  if (status.profile?.role === 'doctor') {
+    const supabase = createSupabaseBrowserClient()
+    const { data: application } = await supabase
+      .from('doctor_verification_applications')
+      .select('status')
+      .eq('doctor_id', userId)
+      .maybeSingle()
+    if (application?.status === 'approved') return '/doctor/dashboard'
+    if (application?.status === 'rejected') return '/doctor/verification-rejected'
+    return application ? '/doctor/verification-pending' : '/doctor-verification'
+  }
   return '/'
 }

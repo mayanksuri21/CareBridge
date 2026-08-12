@@ -63,11 +63,11 @@ export async function GET(request: NextRequest) {
         } else {
           console.log('Profile created/updated successfully')
         }
-        return NextResponse.redirect(`${requestUrl.origin}/`)
+        return NextResponse.redirect(`${requestUrl.origin}${role === 'doctor' ? '/doctor-verification' : '/'}`)
         
       } catch (profileError) {
         console.error('Profile creation error:', profileError)
-        return NextResponse.redirect(`${requestUrl.origin}/`)
+        return NextResponse.redirect(`${requestUrl.origin}${role === 'doctor' ? '/doctor-verification' : '/'}`)
       }
     }
   }

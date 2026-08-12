@@ -314,7 +314,7 @@ export default function HomePage() {
                         {t.patientCta} <ArrowRight className="h-4 w-4" />
                       </Button>
                     </Link>
-                    <Link href="/login">
+                    <Link href="/doctor/register">
                       <Button size="lg" variant="outline" className="gap-2">
                         {t.doctorCta} <Stethoscope className="h-4 w-4" />
                       </Button>
@@ -479,7 +479,10 @@ export default function HomePage() {
                   <li>E‑prescriptions with QR verification</li>
                   <li>Integrated scheduling and patient records</li>
                 </ul>
-                <Link href="/login">
+                <p className="mb-3 text-sm font-medium text-secondary">
+                  Verification is required before you can provide consultations.
+                </p>
+                <Link href="/doctor/register">
                   <Button className="gap-2">
                     Doctor Login / Register <ArrowRight className="h-4 w-4" />
                   </Button>

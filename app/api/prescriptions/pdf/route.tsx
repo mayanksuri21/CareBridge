@@ -43,7 +43,7 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
   const id = searchParams.get("id")
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 })
-  const supabase = createSupabaseServerClient()
+  const supabase =  await createSupabaseServerClient()
   const { data: presc, error } = await supabase.from("prescriptions").select("*").eq("id", id).single()
   if (error || !presc) return NextResponse.json({ error: error?.message || "Not found" }, { status: 404 })
   const { data: items } = await supabase.from("prescription_items").select("*").eq("prescription_id", id)
