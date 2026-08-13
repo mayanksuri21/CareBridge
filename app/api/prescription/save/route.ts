@@ -87,6 +87,15 @@ export async function POST(request: Request) {
     )
     if (itemsError) throw itemsError
 
+    if (appointmentId) {
+      const { error: appointmentError } = await admin
+        .from("appointments")
+        .update({ status: "completed" })
+        .eq("id", appointmentId)
+        .eq("doctor_id", user.id)
+      if (appointmentError) console.warn("Appointment status update failed:", appointmentError)
+    }
+
     return NextResponse.json({ prescription })
   } catch (error) {
     console.error("Prescription save failed:", error)

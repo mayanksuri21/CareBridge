@@ -132,10 +132,19 @@ export default function HomePage() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (isMounted) {
         setSession(session);
-        if (!session) setProfile(null);
+        if (session) {
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("name, role")
+            .eq("id", session.user.id)
+            .maybeSingle();
+          if (isMounted) setProfile(profile as { name: string | null; role: "patient" | "doctor" | null } | null);
+        } else {
+          setProfile(null);
+        }
         setLoading(false);
       }
     });
@@ -145,6 +154,12 @@ export default function HomePage() {
       subscription.unsubscribe();
     };
   }, [supabase]);
+
+  useEffect(() => {
+    if (loading || !session || !profile?.role) return;
+    const dashboardPath = profile.role === "doctor" ? "/doctor/dashboard" : "/patient/dashboard";
+    router.replace(dashboardPath);
+  }, [loading, session, profile, router]);
 
   const dashboardHref = profile?.role === "doctor" ? "/doctor/dashboard" : "/patient/dashboard";
   const dashboardLabel = profile?.role === "doctor" ? "Go to Doctor Dashboard" : "Go to Patient Portal";
@@ -447,72 +462,74 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section id="patients" className="px-4 py-16 md:py-20 scroll-mt-24">
-        <div className="container mx-auto">
-          <div className="grid gap-6 md:grid-cols-2">
-            <Card className="h-full border-primary/20 transition-all duration-300 hover:-translate-y-1 hover:shadow-md">
-              <CardHeader>
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-                    <Users className="h-5 w-5 text-primary" />
+      {(!session || loading) && (
+        <section id="patients" className="px-4 py-16 md:py-20 scroll-mt-24">
+          <div className="container mx-auto">
+            <div className="grid gap-6 md:grid-cols-2">
+              <Card className="h-full border-primary/20 transition-all duration-300 hover:-translate-y-1 hover:shadow-md">
+                <CardHeader>
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                      <Users className="h-5 w-5 text-primary" />
+                    </div>
+                    <CardTitle className="text-xl">For Patients</CardTitle>
                   </div>
-                  <CardTitle className="text-xl">For Patients</CardTitle>
-                </div>
-                <CardDescription>
-                  Book consultations, access records, and get e‑prescriptions.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ul className="mb-4 list-inside list-disc text-sm text-muted-foreground">
-                  <li>24×7 video consultations in your language</li>
-                  <li>Digital records and prescriptions</li>
-                  <li>Reserve medicines at nearby pharmacies</li>
-                </ul>
-                <div className="flex flex-wrap gap-3">
-                  <Link href="/consultation/book">
-                    <Button>Start a consultation</Button>
-                  </Link>
-                  <Link href="/login">
-                    <Button variant="outline">Login / Register</Button>
-                  </Link>
-                </div>
-              </CardContent>
-            </Card>
-            <Card
-              id="doctors"
-              className="h-full border-secondary/20 transition-all duration-300 hover:-translate-y-1 hover:shadow-md"
-            >
-              <CardHeader>
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-secondary/10">
-                    <Stethoscope className="h-5 w-5 text-secondary" />
+                  <CardDescription>
+                    Book consultations, access records, and get e‑prescriptions.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <ul className="mb-4 list-inside list-disc text-sm text-muted-foreground">
+                    <li>24×7 video consultations in your language</li>
+                    <li>Digital records and prescriptions</li>
+                    <li>Reserve medicines at nearby pharmacies</li>
+                  </ul>
+                  <div className="flex flex-wrap gap-3">
+                    <Link href="/consultation/book">
+                      <Button>Start a consultation</Button>
+                    </Link>
+                    <Link href="/login">
+                      <Button variant="outline">Login / Register</Button>
+                    </Link>
                   </div>
-                  <CardTitle className="text-xl">For Doctors</CardTitle>
-                </div>
-                <CardDescription>
-                  Join the network, serve rural patients, and manage
-                  appointments.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ul className="mb-4 list-inside list-disc text-sm text-muted-foreground">
-                  <li>Flexible online clinic with low bandwidth</li>
-                  <li>E‑prescriptions with QR verification</li>
-                  <li>Integrated scheduling and patient records</li>
-                </ul>
-                <p className="mb-3 text-sm font-medium text-secondary">
-                  Verification is required before you can provide consultations.
-                </p>
-                <Link href="/doctor/register">
-                  <Button className="gap-2">
-                    Doctor Login / Register <ArrowRight className="h-4 w-4" />
-                  </Button>
-                </Link>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+              <Card
+                id="doctors"
+                className="h-full border-secondary/20 transition-all duration-300 hover:-translate-y-1 hover:shadow-md"
+              >
+                <CardHeader>
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-secondary/10">
+                      <Stethoscope className="h-5 w-5 text-secondary" />
+                    </div>
+                    <CardTitle className="text-xl">For Doctors</CardTitle>
+                  </div>
+                  <CardDescription>
+                    Join the network, serve rural patients, and manage
+                    appointments.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <ul className="mb-4 list-inside list-disc text-sm text-muted-foreground">
+                    <li>Flexible online clinic with low bandwidth</li>
+                    <li>E‑prescriptions with QR verification</li>
+                    <li>Integrated scheduling and patient records</li>
+                  </ul>
+                  <p className="mb-3 text-sm font-medium text-secondary">
+                    Verification is required before you can provide consultations.
+                  </p>
+                  <Link href="/doctor/register">
+                    <Button className="gap-2">
+                      Doctor Login / Register <ArrowRight className="h-4 w-4" />
+                    </Button>
+                  </Link>
+                </CardContent>
+              </Card>
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+      )}
 
       <section
         id="features"

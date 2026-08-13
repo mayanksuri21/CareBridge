@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
     
     const { data, error } = await supabase.auth.exchangeCodeForSession(code)
     
-    if (!error && data.user) {
+    if (!error && data.user) {
       try {
         const user = data.user
         const profileData = {
@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
           phone: user.user_metadata?.phone_number || '',
           role: role as 'patient' | 'doctor',
           language: 'en'
-        }
+        }
         const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || requestUrl.origin
         const profileResponse = await fetch(`${baseUrl}/api/profile`, {
           method: 'POST',
@@ -53,7 +53,7 @@ export async function GET(request: NextRequest) {
             status: profileResponse.status,
             statusText: profileResponse.statusText,
             url: `${baseUrl}/api/profile`
-          })
+          })
           try {
             const errorText = await profileResponse.text()
             console.error('Profile API error response:', errorText)
@@ -62,14 +62,23 @@ export async function GET(request: NextRequest) {
           }
         } else {
           console.log('Profile created/updated successfully')
-        }
-        return NextResponse.redirect(`${requestUrl.origin}${role === 'doctor' ? '/doctor-verification' : '/'}`)
+        }
+
+        if (role === 'doctor') {
+          return NextResponse.redirect(`${requestUrl.origin}/doctor-verification`)
+        } else {
+          return NextResponse.redirect(`${requestUrl.origin}/patient/dashboard`)
+        }
         
       } catch (profileError) {
-        console.error('Profile creation error:', profileError)
-        return NextResponse.redirect(`${requestUrl.origin}${role === 'doctor' ? '/doctor-verification' : '/'}`)
+        console.error('Profile creation error:', profileError)
+        if (role === 'doctor') {
+          return NextResponse.redirect(`${requestUrl.origin}/doctor-verification`)
+        } else {
+          return NextResponse.redirect(`${requestUrl.origin}/patient/dashboard`)
+        }
       }
     }
-  }
+  }
   return NextResponse.redirect(`${requestUrl.origin}/login`)
 }

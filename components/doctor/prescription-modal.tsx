@@ -1,6 +1,6 @@
 "use client"
 
-import { FormEvent, useId, useState } from "react"
+import { FormEvent, useEffect, useId, useState } from "react"
 import { Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -30,6 +30,7 @@ type PrescriptionModalProps = {
   patientName?: string | null
   initialChiefComplaint?: string | null
   triggerLabel?: string
+  onSaved?: () => void
 }
 
 const emptyMedicine = (): Medicine => ({
@@ -48,6 +49,7 @@ export function PrescriptionModal({
   patientName,
   initialChiefComplaint,
   triggerLabel = "Create Prescription",
+  onSaved,
 }: PrescriptionModalProps) {
   const patientFieldId = useId()
   const [open, setOpen] = useState(false)
@@ -58,6 +60,12 @@ export function PrescriptionModal({
   const [isSaving, setIsSaving] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (open) {
+      setChiefComplaint(initialChiefComplaint ?? "")
+    }
+  }, [open, initialChiefComplaint])
 
   function updateMedicine(index: number, field: keyof Medicine, value: string) {
     setMedicines((currentMedicines) =>
@@ -189,6 +197,7 @@ export function PrescriptionModal({
     setOpen(false)
     setSuccessMessage("Prescription generated successfully!")
     toast.success("Prescription generated successfully!")
+    if (onSaved) onSaved()
   }
 
   return (

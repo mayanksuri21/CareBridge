@@ -1,6 +1,21 @@
 import { createServerClient } from "@supabase/ssr"
 import { NextResponse, type NextRequest } from "next/server"
 
+async function getUserRole(supabase: any, userId: string): Promise<string | null> {
+  try {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", userId)
+      .maybeSingle()
+
+    if (error || !data) return null
+    return data.role
+  } catch {
+    return null
+  }
+}
+
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({
     request: {
@@ -25,10 +40,18 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  // Refresh/synchronize the Supabase session.
   const {
     data: { user },
   } = await supabase.auth.getUser()
+
+  const role = user ? await getUserRole(supabase, user.id) : null
+
+  if (request.nextUrl.pathname === "/" || request.nextUrl.pathname === "") {
+    if (user && role) {
+      const dashboardPath = role === "doctor" ? "/doctor/dashboard" : "/patient/dashboard"
+      return NextResponse.redirect(new URL(dashboardPath, request.url))
+    }
+  }
 
   if (request.nextUrl.pathname.startsWith("/login")) {
     const force = request.nextUrl.searchParams.get("force")
@@ -36,6 +59,11 @@ export async function middleware(request: NextRequest) {
 
     if (force === "true" || mode === "register") {
       return response
+    }
+
+    if (user && role) {
+      const dashboardPath = role === "doctor" ? "/doctor/dashboard" : "/patient/dashboard"
+      return NextResponse.redirect(new URL(dashboardPath, request.url))
     }
 
     if (user) {
