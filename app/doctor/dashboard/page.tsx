@@ -10,6 +10,12 @@ export default async function DoctorDashboard() {
 
   return (
     <main className="container mx-auto px-4 py-8">
+      <header className="mb-6 flex items-center justify-between">
+        <Link href="/" className="text-lg font-semibold text-primary">CareBridge</Link>
+        <nav>
+          <Button asChild variant="ghost" size="sm"><Link href="/doctor/dashboard">Dashboard</Link></Button>
+        </nav>
+      </header>
       <h1 className="text-2xl font-bold">Doctor Dashboard</h1>
 
       <p className="mt-4">

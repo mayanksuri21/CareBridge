@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
 import { useToast } from "@/hooks/use-toast"
@@ -57,7 +57,7 @@ interface ProfileData {
 
 export default function ProfilePage() {
   const router = useRouter()
-  const supabase = createSupabaseBrowserClient()
+  const supabase = useMemo(() => createSupabaseBrowserClient(), [])
   const { toast } = useToast()
   
   const [session, setSession] = useState<Session | null>(null)
@@ -142,7 +142,11 @@ export default function ProfilePage() {
           })
         } else {
           console.log("Profile page: Profile found, loading data:", profile.name)
-          setProfileData(profile)
+          setProfileData({
+            ...profile,
+            name: profile.name || session.user.user_metadata?.full_name || "",
+            email: profile.email || session.user.email || "",
+          })
           
           if (!profile.onboarding_completed) {
             console.log("Profile page: Onboarding not completed, showing onboarding")
@@ -168,7 +172,7 @@ export default function ProfilePage() {
 
     console.log("Profile page: useEffect triggered, calling loadProfile")
     loadProfile()
-  }, [])
+  }, [router, supabase, toast])
 
   const calculateCompleteness = (profile: any) => {
     const requiredFields = ['name', 'email', 'phone', 'role']
@@ -342,7 +346,7 @@ export default function ProfilePage() {
     try {
       const basicData = {
         id: session.user.id,
-        name: session.user.user_metadata?.full_name || "User",
+        name: session.user.user_metadata?.full_name || session.user.email || "",
         email: session.user.email || "",
         role: 'patient' as const,
         phone: '',

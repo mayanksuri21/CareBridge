@@ -23,6 +23,7 @@ import {
   EyeOff,
 } from "lucide-react"
 import Link from "next/link"
+import { PatientPrescriptionsSection } from "@/components/patient/prescriptions-section"
 
 export default function HealthRecordsPage() {
   const [searchTerm, setSearchTerm] = useState("")
@@ -328,6 +329,7 @@ export default function HealthRecordsPage() {
             </TabsContent>
 
             <TabsContent value="prescriptions" className="space-y-4">
+              <PatientPrescriptionsSection />
               {prescriptions.map((prescription) => (
                 <Card key={prescription.id}>
                   <CardHeader>

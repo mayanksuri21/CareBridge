@@ -1,18 +1,18 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
-import Link from "next/link"
-import { useParams } from "next/navigation"
-import { ArrowLeft, Stethoscope } from "lucide-react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useParams, useRouter } from "next/navigation"
+import { ArrowLeft, Mic, MicOff, PhoneOff, Stethoscope, Video, VideoOff } from "lucide-react"
 import {
-  ControlBar,
   GridLayout,
   LiveKitRoom,
   ParticipantTile,
   RoomAudioRenderer,
+  useLocalParticipant,
+  useRoomContext,
   useTracks,
 } from "@livekit/components-react"
-import { Track } from "livekit-client"
+import { DisconnectReason, Track } from "livekit-client"
 
 import { PrescriptionModal } from "@/components/doctor/prescription-modal"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
@@ -25,61 +25,96 @@ type AppointmentDetails = {
   doctor_id: string
   patient_id: string
   reason: string | null
-  patient: {
-    id: string
-    name: string | null
-  } | null
+  patient: { id: string; name: string | null } | null
 }
+
+const demoPatient = {
+  name: "Alex Morgan",
+  ageGender: "28 / Male",
+  chiefComplaint: "High fever, cough, fatigue since 2 days.",
+}
+
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 export default function ConsultRoomPage() {
   const { appointmentId } = useParams<{ appointmentId: string }>()
+  const router = useRouter()
   const supabase = useMemo(() => createSupabaseBrowserClient(), [])
+  const initializedAppointmentRef = useRef<string | null>(null)
+  const tokenRequestRef = useRef(0)
+  const hasConnectedRef = useRef(false)
   const [appointment, setAppointment] = useState<AppointmentDetails | null>(null)
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
-  const [requiresConsent, setRequiresConsent] = useState(false)
+  const [token, setToken] = useState<string>("")
+  const [isMounted, setIsMounted] = useState(false)
   const [consentOpen, setConsentOpen] = useState(false)
-  const [roomToken, setRoomToken] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
+  const [isFetchingToken, setIsFetchingToken] = useState(true)
+  const [wasDisconnected, setWasDisconnected] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [clinicalNotes, setClinicalNotes] = useState("")
 
-  const isDoctor = Boolean(appointment && currentUserId === appointment.doctor_id)
+  const isDoctor = Boolean(currentUserId && (!appointment || currentUserId === appointment.doctor_id))
+  const hasPatientRecord = Boolean(appointment?.patient)
+  const patientName = appointment?.patient?.name ?? demoPatient.name
+  const chiefComplaint = appointment?.reason ?? demoPatient.chiefComplaint
 
-  const requestRoomToken = useCallback(async () => {
-    setIsLoading(true)
+  const fetchToken = useCallback(async (userId: string) => {
+    const requestId = ++tokenRequestRef.current
+    setToken("")
+    setIsFetchingToken(true)
+    setWasDisconnected(false)
     setErrorMessage(null)
 
     try {
       const response = await fetch("/api/livekit/token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ roomName: `appt_${appointmentId}` }),
+        body: JSON.stringify({
+          roomName: appointmentId,
+          identity: `${userId}-${Date.now()}`,
+        }),
       })
       const payload = (await response.json()) as { token?: string; error?: string }
       if (!response.ok || !payload.token) {
         throw new Error(payload.error ?? "Unable to create a video room token.")
       }
-      setRoomToken(payload.token)
+      if (requestId === tokenRequestRef.current) setToken(payload.token)
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Unable to join the video room.")
+      if (requestId === tokenRequestRef.current) {
+        setWasDisconnected(true)
+        setErrorMessage(error instanceof Error ? error.message : "Unable to join the video room.")
+      }
     } finally {
-      setIsLoading(false)
+      if (requestId === tokenRequestRef.current) setIsFetchingToken(false)
     }
   }, [appointmentId])
 
   useEffect(() => {
+    setIsMounted(true)
+    return () => {
+      setIsMounted(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (initializedAppointmentRef.current === appointmentId) return
+    initializedAppointmentRef.current = appointmentId
+
     let active = true
-
-    const loadConsultation = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
-
+    const initializeConsultation = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
       if (!user) {
         if (active) {
           setErrorMessage("Please sign in to join this consultation.")
-          setIsLoading(false)
+          setIsFetchingToken(false)
         }
+        return
+      }
+
+      setCurrentUserId(user.id)
+      if (!uuidPattern.test(appointmentId)) {
+        setAppointment(null)
+        await fetchToken(user.id)
         return
       }
 
@@ -88,56 +123,49 @@ export default function ConsultRoomPage() {
         .select("doctor_id, patient_id, reason, patient:profiles!appointments_patient_id_fkey(id, name)")
         .eq("id", appointmentId)
         .maybeSingle()
-
       if (!active) return
 
       const appointmentDetails = data as unknown as AppointmentDetails | null
-      setCurrentUserId(user.id)
       setAppointment(appointmentDetails)
 
-      const patientNeedsConsent = appointmentDetails?.patient_id === user.id
-      setRequiresConsent(patientNeedsConsent)
-      if (patientNeedsConsent) {
+      if (appointmentDetails?.patient_id === user.id) {
         setConsentOpen(true)
-        setIsLoading(false)
-      } else {
-        void requestRoomToken()
+        setIsFetchingToken(false)
+        return
       }
+
+      await fetchToken(user.id)
     }
 
-    void loadConsultation()
+    void initializeConsultation()
     return () => {
       active = false
     }
-  }, [appointmentId, requestRoomToken, supabase])
+  }, [appointmentId, fetchToken, supabase])
 
   const acceptConsent = async () => {
-    if (requiresConsent && currentUserId) {
-      const { error } = await supabase.from("consents").insert({
-        patient_id: currentUserId,
-        appointment_id: appointmentId,
-        text: "I consent to telemedicine consultation.",
-        accepted: true,
-      })
-      if (error) {
-        setErrorMessage(error.message)
-        return
-      }
+    if (!currentUserId) return
+    const { error } = await supabase.from("consents").insert({
+      patient_id: currentUserId,
+      appointment_id: appointmentId,
+      text: "I consent to telemedicine consultation.",
+      accepted: true,
+    })
+    if (error) {
+      setErrorMessage(error.message)
+      return
     }
-
     setConsentOpen(false)
-    await requestRoomToken()
+    await fetchToken(currentUserId)
   }
 
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border bg-card">
         <div className="container mx-auto flex items-center gap-4 px-4 py-4">
-          <Button asChild variant="ghost" size="sm">
-            <Link href="/doctor/dashboard">
-              <ArrowLeft />
-              Back to Dashboard
-            </Link>
+          <Button variant="ghost" size="sm" onClick={() => router.push("/doctor/dashboard")}>
+            <ArrowLeft />
+            Back to Dashboard
           </Button>
           <div className="flex items-center gap-2">
             <Stethoscope className="size-5 text-primary" />
@@ -146,106 +174,80 @@ export default function ConsultRoomPage() {
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-6">
+      <main className="grid h-[calc(100vh-100px)] grid-cols-1 gap-6 bg-slate-950 p-6 text-white lg:grid-cols-4">
         <AlertDialog open={consentOpen}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Consent for Telemedicine</AlertDialogTitle>
-              <AlertDialogDescription>
-                I agree to participate in this telemedicine consultation and understand its risks and benefits.
-              </AlertDialogDescription>
+              <AlertDialogDescription>I agree to participate in this telemedicine consultation and understand its risks and benefits.</AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel onClick={() => history.back()}>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={acceptConsent}>I Consent</AlertDialogAction>
+              <AlertDialogAction onClick={() => void acceptConsent()}>I Consent</AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
 
-        {errorMessage ? (
-          <Card>
-            <CardContent className="p-6 text-sm text-destructive">{errorMessage}</CardContent>
-          </Card>
-        ) : isLoading ? (
-          <Card>
-            <CardContent className="p-6 text-sm text-muted-foreground">Preparing your secure video room...</CardContent>
-          </Card>
-        ) : roomToken ? (
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
-            <Card className="overflow-hidden">
-              <CardContent className="p-0">
+        <section className="relative flex min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/50 p-4 lg:col-span-3">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-base font-semibold">Live Consultation</h2>
+          </div>
+          <div className="min-h-0 flex-1">
+                {token && isMounted && (
                 <LiveKitRoom
-                  token={roomToken}
+                  key={token}
+                  token={token}
                   serverUrl={process.env.NEXT_PUBLIC_LIVEKIT_URL}
-                  connect
-                  audio
-                  video
-                  className="flex h-[68vh] min-h-[32rem] flex-col bg-muted/30"
-                  onError={(error) => setErrorMessage(error.message)}
+                  connect={true}
+                  video={true}
+                  audio={true}
+                  className="absolute inset-0 flex h-full w-full flex-col bg-black"
+                  onConnected={() => {
+                    hasConnectedRef.current = true
+                  }}
+                  onDisconnected={(reason) => {
+                    setToken("")
+                    setWasDisconnected(true)
+                    if (hasConnectedRef.current && reason === DisconnectReason.CLIENT_INITIATED) {
+                      router.push("/doctor/dashboard")
+                    }
+                  }}
+                  onError={(error) => {
+                    setErrorMessage(error.message)
+                    setToken("")
+                    setWasDisconnected(true)
+                  }}
                 >
-                  <div className="min-h-0 flex-1 p-3">
-                    <MediaGrid />
+                  <div className="flex h-full flex-col justify-between">
+                    <div className="relative min-h-0 flex-1 overflow-hidden rounded-xl bg-slate-900/90">
+                      <MediaGrid />
+                    </div>
+                    <MeetControls onEnded={() => router.push("/doctor/dashboard")} />
                   </div>
                   <RoomAudioRenderer />
-                  <ControlBar
-                    className="border-t bg-card p-3"
-                    controls={{ microphone: true, camera: true, screenShare: true, leave: true }}
-                  />
                 </LiveKitRoom>
+                )}
+          </div>
+        </section>
+
+          <aside className="min-h-0 space-y-4 overflow-y-auto lg:col-span-1">
+            <Card>
+              <CardHeader><CardTitle className="text-base">Patient Details</CardTitle></CardHeader>
+              <CardContent className="space-y-4 text-sm">
+                {!hasPatientRecord && <p className="rounded-md bg-muted p-2 text-xs text-muted-foreground">Demo patient summary</p>}
+                <dl className="space-y-3">
+                  <div><dt className="text-muted-foreground">Patient Name</dt><dd className="font-medium">{patientName}</dd></div>
+                  <div><dt className="text-muted-foreground">Age / Gender</dt><dd className="font-medium">{hasPatientRecord ? "Not available" : demoPatient.ageGender}</dd></div>
+                  <div><dt className="text-muted-foreground">Chief Complaint</dt><dd className="font-medium">{chiefComplaint}</dd></div>
+                </dl>
               </CardContent>
             </Card>
-
-            <details open className="group rounded-lg border bg-card xl:max-h-[68vh] xl:overflow-y-auto">
-              <summary className="flex cursor-pointer list-none items-center justify-between p-4 font-semibold [&::-webkit-details-marker]:hidden">
-                Clinical Panel
-                <span className="text-sm font-normal text-muted-foreground group-open:hidden">Open</span>
-                <span className="hidden text-sm font-normal text-muted-foreground group-open:inline">Close</span>
-              </summary>
-              <div className="space-y-5 border-t p-4">
-                <section className="space-y-2">
-                  <h2 className="text-sm font-semibold">Patient Details</h2>
-                  <dl className="space-y-2 text-sm">
-                    <div className="flex justify-between gap-4">
-                      <dt className="text-muted-foreground">Name</dt>
-                      <dd className="text-right font-medium">{appointment?.patient?.name ?? "Not available"}</dd>
-                    </div>
-                    <div className="flex justify-between gap-4">
-                      <dt className="text-muted-foreground">Age</dt>
-                      <dd className="text-right font-medium">Not available</dd>
-                    </div>
-                    <div className="space-y-1">
-                      <dt className="text-muted-foreground">Chief Complaint</dt>
-                      <dd>{appointment?.reason ?? "Not recorded"}</dd>
-                    </div>
-                  </dl>
-                </section>
-
-                <section className="space-y-2">
-                  <label className="text-sm font-semibold" htmlFor="clinical-notes">
-                    In-Call Clinical Notes
-                  </label>
-                  <Textarea
-                    id="clinical-notes"
-                    value={clinicalNotes}
-                    onChange={(event) => setClinicalNotes(event.target.value)}
-                    placeholder="Capture observations and follow-up notes during the call"
-                    className="min-h-36"
-                  />
-                </section>
-
-                {isDoctor && appointment && (
-                  <PrescriptionModal
-                    appointmentId={appointmentId}
-                    doctorId={appointment.doctor_id}
-                    patientId={appointment.patient_id}
-                    patientName={appointment.patient?.name}
-                    initialChiefComplaint={appointment.reason}
-                  />
-                )}
-              </div>
-            </details>
-          </div>
-        ) : null}
+            <Card>
+              <CardHeader><CardTitle className="text-base">In-Call Clinical Notes</CardTitle></CardHeader>
+              <CardContent><Textarea value={clinicalNotes} onChange={(event) => setClinicalNotes(event.target.value)} placeholder="Capture observations and follow-up notes" className="min-h-36" /></CardContent>
+            </Card>
+            {isDoctor && <PrescriptionModal appointmentId={appointment ? appointmentId : undefined} doctorId={currentUserId!} patientId={appointment?.patient_id} patientName={patientName} initialChiefComplaint={chiefComplaint} triggerLabel="Issue Prescription" />}
+          </aside>
       </main>
     </div>
   )
@@ -256,10 +258,42 @@ function MediaGrid() {
     { source: Track.Source.Camera, withPlaceholder: true },
     { source: Track.Source.ScreenShare, withPlaceholder: false },
   ])
+  return <GridLayout className="h-full w-full bg-slate-900 [&_.lk-video-container]:bg-transparent [&_[data-lk-participant-tile]]:overflow-hidden [&_[data-lk-participant-tile]]:rounded-xl [&_[data-lk-participant-tile]]:bg-slate-900 [&_video]:h-full [&_video]:w-full [&_video]:object-contain" tracks={tracks}><ParticipantTile /></GridLayout>
+}
+
+function MeetControls({ onEnded }: { onEnded: () => void }) {
+  const room = useRoomContext()
+  const { isCameraEnabled, isMicrophoneEnabled, localParticipant } = useLocalParticipant()
+
+  const leaveRoom = async () => {
+    await room.disconnect()
+    onEnded()
+  }
 
   return (
-    <GridLayout className="h-full" tracks={tracks}>
-      <ParticipantTile />
-    </GridLayout>
+    <div className="mx-auto mt-4 flex w-fit items-center gap-4 rounded-full border border-slate-700 bg-slate-800/90 px-6 py-3 shadow-2xl">
+      <div className="flex gap-2">
+        <Button
+          variant={isMicrophoneEnabled ? "secondary" : "destructive"}
+          size="icon"
+          aria-label={isMicrophoneEnabled ? "Mute microphone" : "Unmute microphone"}
+          onClick={() => void localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled)}
+        >
+          {isMicrophoneEnabled ? <Mic /> : <MicOff />}
+        </Button>
+        <Button
+          variant={isCameraEnabled ? "secondary" : "destructive"}
+          size="icon"
+          aria-label={isCameraEnabled ? "Turn camera off" : "Turn camera on"}
+          onClick={() => void localParticipant.setCameraEnabled(!isCameraEnabled)}
+        >
+          {isCameraEnabled ? <Video /> : <VideoOff />}
+        </Button>
+      </div>
+      <div className="h-8 w-px bg-slate-700" />
+      <Button variant="destructive" size="icon" aria-label="End call" onClick={() => void leaveRoom()}>
+        <PhoneOff className="rotate-[-135deg]" />
+      </Button>
+    </div>
   )
 }

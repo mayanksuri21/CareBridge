@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -56,8 +56,9 @@ export default function HomePage() {
   const [isPlaying, setIsPlaying] = useState(true);
   const { theme, setTheme } = useTheme();
   const { t } = useLanguage();
-  const supabase = createSupabaseBrowserClient();
+  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const [session, setSession] = useState<Session | null>(null);
+  const [profile, setProfile] = useState<{ name: string | null; role: "patient" | "doctor" | null } | null>(null);
   const [loading, setLoading] = useState(true);
   const [mounted, setMounted] = useState(false);
 
@@ -105,6 +106,16 @@ export default function HomePage() {
             setSession(null);
           } else {
             setSession(session);
+            if (session) {
+              const { data: profile } = await supabase
+                .from("profiles")
+                .select("name, role")
+                .eq("id", session.user.id)
+                .maybeSingle();
+              if (isMounted) setProfile(profile as { name: string | null; role: "patient" | "doctor" | null } | null);
+            } else {
+              setProfile(null);
+            }
           }
           setLoading(false);
         }
@@ -124,6 +135,7 @@ export default function HomePage() {
     } = supabase.auth.onAuthStateChange((_event, session) => {
       if (isMounted) {
         setSession(session);
+        if (!session) setProfile(null);
         setLoading(false);
       }
     });
@@ -132,7 +144,11 @@ export default function HomePage() {
       isMounted = false;
       subscription.unsubscribe();
     };
-  }, [supabase.auth]);
+  }, [supabase]);
+
+  const dashboardHref = profile?.role === "doctor" ? "/doctor/dashboard" : "/patient/dashboard";
+  const dashboardLabel = profile?.role === "doctor" ? "Go to Doctor Dashboard" : "Go to Patient Portal";
+  const displayName = profile?.name || session?.user.user_metadata?.full_name || session?.user.email || "Account";
 
   const togglePlayback = async () => {
     const el = videoRef.current;
@@ -261,6 +277,11 @@ export default function HomePage() {
                 )}
               </button>
               <LanguageSelector />
+              {session && (
+                <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex">
+                  <Link href="/profile">{displayName}</Link>
+                </Button>
+              )}
               <AuthButton />
             </div>
           </div>
@@ -296,9 +317,9 @@ export default function HomePage() {
               <div className="mt-6 flex flex-col sm:flex-row gap-3">
                 {session ? (
                   <>
-                    <Link href="/profile">
+                    <Link href={dashboardHref}>
                       <Button size="lg" className="gap-2">
-                        View Profile <ArrowRight className="h-4 w-4" />
+                        {dashboardLabel} <ArrowRight className="h-4 w-4" />
                       </Button>
                     </Link>
                     <Link href="/consultation/book">
