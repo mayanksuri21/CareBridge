@@ -1,9 +1,10 @@
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
+import { TodayConsultations } from "@/components/doctor/today-consultations"
 import { requireDoctorVerification } from "@/lib/supabase/doctor-verification"
 
 export default async function DoctorDashboard() {
-  await requireDoctorVerification("approved")
+  const result = await requireDoctorVerification("approved")
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -13,6 +14,10 @@ export default async function DoctorDashboard() {
         <Link href="/profile">
           <Button size="sm">Edit Profile</Button>
         </Link>
+      </div>
+
+      <div className="mt-8">
+        <TodayConsultations doctorId={result.user.id} />
       </div>
     </div>
   )
