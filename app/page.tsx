@@ -40,6 +40,7 @@ import { useTheme } from "next-themes";
 import { useLanguage } from "@/components/language-provider";
 import GradualBlur from "@/components/ui/gradual-blur";
 import { Footer } from "@/components/ui/footer-section";
+import { Navbar } from "@/components/ui/navbar";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import type { Session } from "@supabase/supabase-js";
 import { TextEffect } from "@/components/ui/text-effect";
@@ -155,14 +156,11 @@ export default function HomePage() {
     };
   }, [supabase]);
 
-  useEffect(() => {
-    if (loading || !session || !profile?.role) return;
-    const dashboardPath = profile.role === "doctor" ? "/doctor/dashboard" : "/patient/dashboard";
-    router.replace(dashboardPath);
-  }, [loading, session, profile, router]);
+
 
   const dashboardHref = profile?.role === "doctor" ? "/doctor/dashboard" : "/patient/dashboard";
-  const dashboardLabel = profile?.role === "doctor" ? "Go to Doctor Dashboard" : "Go to Patient Portal";
+  const dashboardLabel = profile?.role === "doctor" ? "Go to Doctor Dashboard" : "Go to Your History";
+  const historyHref = "/patient/dashboard";
   const displayName = profile?.name || session?.user.user_metadata?.full_name || session?.user.email || "Account";
 
   const togglePlayback = async () => {
@@ -218,90 +216,34 @@ export default function HomePage() {
         <div className="absolute bottom-0 right-0 h-60 w-60 rounded-full bg-primary/10 blur-2xl" />
       </div>
 
-      <header className="border-b border-border/50 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-30">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-9 h-9 bg-primary rounded-lg flex items-center justify-center shadow-sm">
-                <Phone className="w-4 h-4 text-primary-foreground" />
-              </div>
-              <h1 className="text-xl font-bold text-foreground tracking-tight">
-                CareBridge
-              </h1>
-              <Badge variant="secondary" className="ml-2 hidden sm:inline-flex">
-                Bridging Healthcare
-              </Badge>
-            </div>
-            <nav className="hidden md:flex items-center gap-4 lg:gap-6 text-sm text-muted-foreground">
-              <a
-                href="#about"
-                className="hover:text-foreground transition-colors"
-              >
-                About
-              </a>
-              <a
-                href="#features"
-                className="hover:text-foreground transition-colors"
-              >
-                {t.navFeatures}
-              </a>
-              <a
-                href="#how-it-works"
-                className="hover:text-foreground transition-colors"
-              >
-                {t.navHowItWorks}
-              </a>
-              <a
-                href="#patients"
-                className="hover:text-foreground transition-colors"
-              >
-                {t.navForPatients}
-              </a>
-              <a
-                href="#doctors"
-                className="hover:text-foreground transition-colors"
-              >
-                {t.navForDoctors}
-              </a>
-              <a
-                href="#faq"
-                className="hover:text-foreground transition-colors"
-              >
-                FAQ
-              </a>
-              <a
-                href="#contact"
-                className="hover:text-foreground transition-colors"
-              >
-                Contact
-              </a>
-            </nav>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={toggleTheme}
-                className="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-accent/50"
-              >
-                {mounted ? (
-                  theme === "dark" ? (
-                    <Sun className="h-4 w-4" />
-                  ) : (
-                    <Moon className="h-4 w-4" />
-                  )
-                ) : (
-                  <Moon className="h-4 w-4" />
-                )}
-              </button>
-              <LanguageSelector />
-              {session && (
-                <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex">
-                  <Link href="/profile">{displayName}</Link>
-                </Button>
-              )}
-              <AuthButton />
-            </div>
-          </div>
+      <Navbar />
+      <div className="border-b border-border/50 bg-muted/10">
+        <div className="container mx-auto flex flex-wrap items-center justify-end gap-3 px-4 py-2 text-sm">
+          <nav className="mr-auto hidden md:flex items-center gap-4 text-muted-foreground">
+            <a href="#about" className="hover:text-foreground transition-colors">About</a>
+            <a href="#features" className="hover:text-foreground transition-colors">{t.navFeatures}</a>
+            <a href="#how-it-works" className="hover:text-foreground transition-colors">{t.navHowItWorks}</a>
+            <a href="#faq" className="hover:text-foreground transition-colors">FAQ</a>
+            <a href="#contact" className="hover:text-foreground transition-colors">Contact</a>
+          </nav>
+          <button
+            onClick={toggleTheme}
+            className="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-accent/50"
+            aria-label="Toggle theme"
+          >
+            {mounted ? (
+              theme === "dark" ? (
+                <Sun className="h-4 w-4" />
+              ) : (
+                <Moon className="h-4 w-4" />
+              )
+            ) : (
+              <Moon className="h-4 w-4" />
+            )}
+          </button>
+          <LanguageSelector />
         </div>
-      </header>
+      </div>
 
       <section className="relative overflow-hidden py-10 md:py-16 lg:py-20">
         <div className="container mx-auto px-4 py-10 md:py-16 lg:py-20 relative z-10">

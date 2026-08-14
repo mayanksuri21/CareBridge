@@ -1,6 +1,8 @@
 import Link from "next/link"
 import { CalendarCheck, ClipboardList, FileText, Stethoscope, Users } from "lucide-react"
 
+import { DoctorSlotManager, type SavedSlot } from "@/components/doctor/doctor-slot-manager"
+import { PendingRequestsPanel } from "@/components/doctor/pending-requests-panel"
 import { PrescriptionModal } from "@/components/doctor/prescription-modal"
 import { requireDoctorVerification } from "@/lib/supabase/doctor-verification"
 import { TodayConsultations } from "@/components/doctor/today-consultations"
@@ -9,6 +11,8 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 
+export const dynamic = "force-dynamic"
+
 type DoctorProfile = {
   id: string
   name: string | null
@@ -16,6 +20,7 @@ type DoctorProfile = {
   specialty: string | null
   phone: string | null
   language: string | null
+  available_slots: SavedSlot[] | null
 }
 
 type DashboardMetrics = {
@@ -33,7 +38,7 @@ export default async function DoctorDashboard() {
   const [{ data: profile }, { count: totalAppointments }, { count: totalPrescriptions }] = await Promise.all([
     supabase
       .from("profiles")
-      .select("id, name, email, specialty, phone, language")
+      .select("id, name, email, specialty, phone, language, available_slots")
       .eq("id", doctorId)
       .maybeSingle(),
 
@@ -53,7 +58,7 @@ export default async function DoctorDashboard() {
   const startOfTomorrow = new Date(startOfToday)
   startOfTomorrow.setDate(startOfTomorrow.getDate() + 1)
 
-  const [{ count: todayAppointments }, { count: todayCompleted }] = await Promise.all([
+  const [{ count: todayAppointments }, { count: todayCompleted }, { data: doctorRow }] = await Promise.all([
     supabase
       .from("appointments")
       .select("*", { count: "exact", head: true })
@@ -68,15 +73,29 @@ export default async function DoctorDashboard() {
       .eq("status", "completed")
       .gte("created_at", startOfToday.toISOString())
       .lt("created_at", startOfTomorrow.toISOString()),
+
+    supabase
+      .from("doctors")
+      .select("available_slots")
+      .eq("id", doctorId)
+      .maybeSingle(),
   ])
 
-  const doctor = (profile ?? {
+  let savedSlots: SavedSlot[] = []
+  if (doctorRow && Array.isArray((doctorRow as any).available_slots)) {
+    savedSlots = (doctorRow as any).available_slots
+  } else if (profile && Array.isArray((profile as any).available_slots)) {
+    savedSlots = (profile as any).available_slots
+  }
+
+  const doctor: DoctorProfile = (profile ?? {
     id: doctorId,
     name: result.user.email?.split("@")[0] ?? "Doctor",
     email: result.user.email,
     specialty: null,
     phone: null,
     language: null,
+    available_slots: savedSlots,
   }) as DoctorProfile
 
   const metrics: DashboardMetrics = {
@@ -98,7 +117,10 @@ export default async function DoctorDashboard() {
       <header className="border-b bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-30">
         <div className="container mx-auto flex flex-wrap items-center justify-between gap-4 px-4 py-4">
           <div className="flex items-center gap-3">
-            <Link href="/" className="flex items-center gap-2 text-primary hover:text-primary/90 transition-colors">
+            <Link
+              href="/"
+              className="flex items-center gap-2 text-primary hover:text-primary/90 transition-colors"
+            >
               <div className="w-9 h-9 bg-primary/10 rounded-lg flex items-center justify-center">
                 <Stethoscope className="w-4 h-4" />
               </div>
@@ -220,6 +242,11 @@ export default async function DoctorDashboard() {
             </div>
           </CardContent>
         </Card>
+      </section>
+
+      <section className="container mx-auto grid gap-4 px-4 pb-4 lg:grid-cols-[1.2fr_1fr]">
+        <PendingRequestsPanel doctorId={doctorId} />
+        <DoctorSlotManager doctorId={doctorId} initialSavedSlots={savedSlots} />
       </section>
 
       <section className="container mx-auto px-4 pb-16">

@@ -46,13 +46,6 @@ export async function middleware(request: NextRequest) {
 
   const role = user ? await getUserRole(supabase, user.id) : null
 
-  if (request.nextUrl.pathname === "/" || request.nextUrl.pathname === "") {
-    if (user && role) {
-      const dashboardPath = role === "doctor" ? "/doctor/dashboard" : "/patient/dashboard"
-      return NextResponse.redirect(new URL(dashboardPath, request.url))
-    }
-  }
-
   if (request.nextUrl.pathname.startsWith("/login")) {
     const force = request.nextUrl.searchParams.get("force")
     const mode = request.nextUrl.searchParams.get("mode")

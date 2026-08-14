@@ -38,7 +38,7 @@ export function PatientDashboardClient({
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [prescriptions, setPrescriptions] = useState<PrintablePrescription[]>(initialPrescriptions)
-  const [loadingPrescriptions, setLoadingPrescriptions] = useState(initialPrescriptions.length === 0)
+  const [loadingPrescriptions, setLoadingPrescriptions] = useState(true)
 
   const greeting = (() => {
     const hour = new Date().getHours()
@@ -48,8 +48,18 @@ export function PatientDashboardClient({
   })()
 
   const refreshPrescriptions = useCallback(async () => {
+    let completed = false
+    const safetyTimer = setTimeout(() => {
+      if (!completed) {
+        setLoadingPrescriptions(false)
+      }
+    }, 8000)
     try {
       setLoadingPrescriptions(true)
+      if (!patientId) {
+        setPrescriptions([])
+        return
+      }
       const { data, error } = await supabase
         .from("prescriptions")
         .select("id, created_at, doctor_name, diagnosis, medicines, advice")
@@ -57,17 +67,27 @@ export function PatientDashboardClient({
         .order("created_at", { ascending: false })
       if (!error && data) {
         setPrescriptions(data as unknown as PrintablePrescription[])
+      } else if (error) {
+        console.error("Failed to fetch prescriptions:", error)
+        setPrescriptions(initialPrescriptions)
       }
+    } catch (err) {
+      console.error("Prescription fetch error:", err)
+      setPrescriptions(initialPrescriptions)
     } finally {
+      completed = true
+      clearTimeout(safetyTimer)
       setLoadingPrescriptions(false)
     }
-  }, [supabase, patientId])
+  }, [supabase, patientId, initialPrescriptions])
 
   useEffect(() => {
-    if (initialPrescriptions.length === 0) {
-      refreshPrescriptions()
+    if (initialPrescriptions.length > 0) {
+      setPrescriptions(initialPrescriptions)
+      setLoadingPrescriptions(false)
     }
-  }, [initialPrescriptions.length, refreshPrescriptions])
+    void refreshPrescriptions()
+  }, [refreshPrescriptions, initialPrescriptions])
 
   useEffect(() => {
     const channel = supabase
@@ -234,9 +254,9 @@ export function PatientDashboardClient({
                 <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
                   <Pill className="h-7 w-7 text-primary" />
                 </div>
-                <h3 className="text-base font-semibold">No prescriptions yet</h3>
+                <h3 className="text-base font-semibold">No active prescriptions found yet.</h3>
                 <p className="mt-1 max-w-md text-sm text-muted-foreground">
-                  Once your doctor issues a digital prescription, it will appear here, ready for download and pharmacy use.
+                  Once your doctor issues one, it will appear here.
                 </p>
                 <div className="mt-6">
                   <Button asChild className="gap-2">
