@@ -1,12 +1,10 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
-import { Checkbox } from "@/components/ui/checkbox"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
 import {
@@ -39,11 +37,34 @@ interface Assessment {
   urgency: "routine" | "urgent" | "emergency"
 }
 
+const dayLabels = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+
 export default function SymptomsPage() {
   const [currentStep, setCurrentStep] = useState(0)
   const [answers, setAnswers] = useState<Record<string, any>>({})
   const [isAssessing, setIsAssessing] = useState(false)
   const [assessment, setAssessment] = useState<Assessment | null>(null)
+  
+  // History log tracking states
+  const [history, setHistory] = useState<any[]>([])
+  const [showHistory, setShowHistory] = useState(false)
+
+  const loadHistory = () => {
+    try {
+      const cached = localStorage.getItem("patient_symptom_history")
+      if (cached) {
+        setHistory(JSON.parse(cached))
+      } else {
+        setHistory([])
+      }
+    } catch (_) {
+      setHistory([])
+    }
+  }
+
+  useEffect(() => {
+    loadHistory()
+  }, [])
 
   const questions: Question[] = [
     {
@@ -101,6 +122,7 @@ export default function SymptomsPage() {
         "Diarrhea",
         "Fatigue",
         "Loss of appetite",
+        "None of the above",
       ],
       required: false,
     },
@@ -152,82 +174,60 @@ export default function SymptomsPage() {
     }
   }
 
-  const performAssessment = () => {
+  const performAssessment = async () => {
     setIsAssessing(true)
 
-    setTimeout(() => {
-
-      const primarySymptom = answers.primary_symptom
-      const severity = Number.parseInt(answers.severity) || 5
-      const additionalSymptoms = answers.additional_symptoms || []
-
-      let mockAssessment: Assessment
-
-      if (primarySymptom === "Fever or chills" && additionalSymptoms.includes("Difficulty breathing")) {
-        mockAssessment = {
-          condition: "Possible Respiratory Infection",
-          probability: 75,
-          severity: "medium",
-          description:
-            "Based on your symptoms, you may have a respiratory infection. The combination of fever and breathing difficulties requires medical attention.",
-          recommendations: [
-            "Schedule a consultation with a doctor within 24 hours",
-            "Monitor your temperature regularly",
-            "Stay hydrated and get plenty of rest",
-            "Avoid contact with others to prevent spread",
-          ],
-          urgency: "urgent",
-        }
-      } else if (primarySymptom === "Cough or breathing problems") {
-        mockAssessment = {
-          condition: "Upper Respiratory Symptoms",
-          probability: 65,
-          severity: "low",
-          description:
-            "Your symptoms suggest a common upper respiratory condition. Most cases resolve with proper care and rest.",
-          recommendations: [
-            "Rest and stay hydrated",
-            "Consider over-the-counter cough medicine",
-            "Use a humidifier or breathe steam",
-            "Consult a doctor if symptoms worsen or persist beyond 7 days",
-          ],
-          urgency: "routine",
-        }
-      } else if (severity >= 8 || additionalSymptoms.includes("Chest pain")) {
-        mockAssessment = {
-          condition: "High Severity Symptoms",
-          probability: 85,
-          severity: "high",
-          description:
-            "Your symptoms indicate a condition that requires immediate medical attention. Please seek care promptly.",
-          recommendations: [
-            "Seek immediate medical attention",
-            "Contact emergency services if symptoms worsen",
-            "Do not delay medical care",
-            "Have someone accompany you to the hospital if possible",
-          ],
-          urgency: "emergency",
-        }
-      } else {
-        mockAssessment = {
-          condition: "General Symptoms",
-          probability: 50,
-          severity: "low",
-          description:
-            "Your symptoms are common and may resolve with self-care. However, monitor your condition closely.",
-          recommendations: [
-            "Rest and stay hydrated",
-            "Monitor symptoms for changes",
-            "Consider over-the-counter remedies as appropriate",
-            "Consult a doctor if symptoms persist or worsen",
-          ],
-          urgency: "routine",
-        }
-      }
+    try {
+      const res = await fetch("/api/symptoms/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(answers),
+      })
+      if (!res.ok) throw new Error("AI assessment failed")
+      const payload = await res.json()
+      const mockAssessment = payload.assessment
 
       setAssessment(mockAssessment)
+
+      // Save assessments with timestamp into localStorage
+      try {
+        const cached = localStorage.getItem("patient_symptom_history")
+        let historyList = []
+        if (cached) {
+          historyList = JSON.parse(cached)
+          if (!Array.isArray(historyList)) historyList = []
+        }
+        historyList.unshift({
+          condition: mockAssessment.condition,
+          urgency: mockAssessment.urgency,
+          description: mockAssessment.description,
+          timestamp: new Date().toISOString()
+        })
+        localStorage.setItem("patient_symptom_history", JSON.stringify(historyList))
+        loadHistory() // Sync local list
+      } catch (err) {
+        console.error("Failed to save assessment to history log:", err)
+      }
+    } catch (err: any) {
+      console.error(err)
+      // Fallback in case of endpoint error
+      const fallbackAssessment: Assessment = {
+        condition: "Clinical Review Recommended",
+        probability: 65,
+        severity: "medium",
+        description: "We noted your symptoms. A medical evaluation is recommended to pinpoint the underlying cause.",
+        recommendations: [
+          "Rest and keep a log of temperature and symptoms",
+          "Avoid heavy physical exertion",
+          "Maintain proper fluid balance",
+          "Consult with a physician if symptoms worsen"
+        ],
+        urgency: "routine"
+      }
+      setAssessment(fallbackAssessment)
+    } finally {
       setIsAssessing(false)
-    }, 3000)
+    }
   }
 
   const resetAssessment = () => {
@@ -235,11 +235,30 @@ export default function SymptomsPage() {
     setAnswers({})
     setAssessment(null)
     setIsAssessing(false)
+    setShowHistory(false)
+  }
+
+  const isNextDisabled = () => {
+    const currentQuestion = questions[currentStep]
+    if (!currentQuestion.required) return false
+
+    const val = answers[currentQuestion.id]
+    if (val === undefined || val === null) return true
+    if (typeof val === "string" && val.trim() === "") return true
+    if (Array.isArray(val) && val.length === 0) return true
+
+    // Require description text if Question 3 "Other" symptom is chosen
+    if (currentQuestion.id === "primary_symptom" && val === "Other") {
+      const otherVal = answers.primary_symptom_other
+      if (!otherVal || typeof otherVal !== "string" || otherVal.trim() === "") return true
+    }
+
+    return false
   }
 
   if (isAssessing) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
         <Card className="w-full max-w-md">
           <CardContent className="pt-6">
             <div className="text-center space-y-4">
@@ -247,11 +266,11 @@ export default function SymptomsPage() {
                 <Brain className="w-8 h-8 text-primary animate-pulse" />
               </div>
               <h3 className="text-lg font-semibold">Analyzing Your Symptoms</h3>
-              <p className="text-muted-foreground">
+              <p className="text-muted-foreground text-sm">
                 Our AI is processing your information to provide personalized health insights...
               </p>
               <Progress value={66} className="w-full" />
-              <p className="text-sm text-muted-foreground">This may take a few moments</p>
+              <p className="text-xs text-muted-foreground">This may take a few moments</p>
             </div>
           </CardContent>
         </Card>
@@ -262,7 +281,6 @@ export default function SymptomsPage() {
   if (assessment) {
     return (
       <div className="min-h-screen bg-background">
-        
         <header className="border-b border-border bg-card">
           <div className="container mx-auto px-4 py-4">
             <div className="flex items-center space-x-4">
@@ -282,27 +300,24 @@ export default function SymptomsPage() {
 
         <div className="container mx-auto px-4 py-8">
           <div className="max-w-4xl mx-auto space-y-6">
-            
             <Card
-              className={`border-l-4 ${
-                assessment.urgency === "emergency"
+              className={`border-l-4 ${assessment.urgency === "emergency"
                   ? "border-l-red-500"
                   : assessment.urgency === "urgent"
                     ? "border-l-amber-500"
                     : "border-l-green-500"
-              }`}
+                }`}
             >
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-3">
                     <div
-                      className={`w-12 h-12 rounded-full flex items-center justify-center ${
-                        assessment.urgency === "emergency"
+                      className={`w-12 h-12 rounded-full flex items-center justify-center ${assessment.urgency === "emergency"
                           ? "bg-red-100"
                           : assessment.urgency === "urgent"
                             ? "bg-amber-100"
                             : "bg-green-100"
-                      }`}
+                        }`}
                     >
                       {assessment.urgency === "emergency" ? (
                         <AlertTriangle className="w-6 h-6 text-red-600" />
@@ -351,7 +366,7 @@ export default function SymptomsPage() {
             </Card>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <Card className="hover:shadow-lg transition-shadow cursor-pointer">
+              <Card className="hover:shadow-lg transition-shadow">
                 <CardContent className="pt-6">
                   <div className="text-center space-y-3">
                     <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center mx-auto">
@@ -359,14 +374,14 @@ export default function SymptomsPage() {
                     </div>
                     <h3 className="font-semibold">Book Consultation</h3>
                     <p className="text-sm text-muted-foreground">Schedule a video call with a doctor</p>
-                    <Link href="/consultation">
+                    <Link href="/consultation" className="block w-full">
                       <Button className="w-full">Book Now</Button>
                     </Link>
                   </div>
                 </CardContent>
               </Card>
 
-              <Card className="hover:shadow-lg transition-shadow cursor-pointer">
+              <Card className="hover:shadow-lg transition-shadow">
                 <CardContent className="pt-6">
                   <div className="text-center space-y-3">
                     <div className="w-12 h-12 bg-secondary/10 rounded-full flex items-center justify-center mx-auto">
@@ -374,14 +389,21 @@ export default function SymptomsPage() {
                     </div>
                     <h3 className="font-semibold">Track Symptoms</h3>
                     <p className="text-sm text-muted-foreground">Monitor your condition over time</p>
-                    <Button variant="outline" className="w-full bg-transparent">
-                      Start Tracking
+                    <Button
+                      variant="outline"
+                      className="w-full bg-transparent font-medium"
+                      onClick={() => {
+                        loadHistory()
+                        setShowHistory(!showHistory)
+                      }}
+                    >
+                      {showHistory ? "Hide History Log" : "Track Symptoms"}
                     </Button>
                   </div>
                 </CardContent>
               </Card>
 
-              <Card className="hover:shadow-lg transition-shadow cursor-pointer">
+              <Card className="hover:shadow-lg transition-shadow">
                 <CardContent className="pt-6">
                   <div className="text-center space-y-3">
                     <div className="w-12 h-12 bg-accent/10 rounded-full flex items-center justify-center mx-auto">
@@ -397,6 +419,44 @@ export default function SymptomsPage() {
               </Card>
             </div>
 
+            {/* Assessment History Log Section */}
+            {showHistory && (
+              <Card className="border-emerald-500/20 bg-emerald-500/5">
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Clock className="w-5 h-5 text-emerald-500" />
+                    Symptom Checker History Log
+                  </CardTitle>
+                  <CardDescription>
+                    Your past symptom assessments saved locally on this device.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {history.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No assessment history found.</p>
+                  ) : (
+                    <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2">
+                      {history.map((entry: any, index: number) => (
+                        <div key={index} className="flex flex-col gap-1 border-b pb-3 last:border-0 last:pb-0">
+                          <div className="flex items-center justify-between text-xs text-muted-foreground">
+                            <span>{new Date(entry.timestamp).toLocaleString()}</span>
+                            <Badge variant="outline" className="capitalize text-[10px]">
+                              {entry.urgency}
+                            </Badge>
+                          </div>
+                          <span className="text-sm font-semibold text-foreground">{entry.condition}</span>
+                          <p className="text-xs text-muted-foreground line-clamp-2">{entry.description}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <Button variant="ghost" size="sm" onClick={() => setShowHistory(false)} className="w-full text-xs">
+                    Close History Log
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+
             {assessment.urgency === "emergency" && (
               <Card className="bg-red-50 border-red-200">
                 <CardContent className="pt-6">
@@ -408,18 +468,23 @@ export default function SymptomsPage() {
                         Your symptoms require immediate medical attention. Please contact emergency services or visit
                         the nearest hospital.
                       </p>
-                      <div className="flex space-x-2">
-                        <Button variant="destructive" size="sm">
-                          <Phone className="w-4 h-4 mr-2" />
-                          Call 108 (Emergency)
+                      <div className="flex flex-wrap gap-2">
+                        <Button variant="destructive" size="sm" asChild>
+                          <a href="tel:108">
+                            <Phone className="w-4 h-4 mr-2" />
+                            Call 108 (Emergency)
+                          </a>
                         </Button>
                         <Button
                           variant="outline"
                           size="sm"
                           className="border-red-300 text-red-800 hover:bg-red-100 bg-transparent"
+                          asChild
                         >
-                          <Phone className="w-4 h-4 mr-2" />
-                          Local Care Center: +91 98765 00000
+                          <a href="tel:+919876500000">
+                            <Phone className="w-4 h-4 mr-2" />
+                            Local Care Center: +91 98765 00000
+                          </a>
                         </Button>
                       </div>
                     </div>
@@ -450,7 +515,6 @@ export default function SymptomsPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      
       <header className="border-b border-border bg-card">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center space-x-4">
@@ -470,7 +534,6 @@ export default function SymptomsPage() {
 
       <div className="container mx-auto px-4 py-8">
         <div className="max-w-2xl mx-auto">
-          
           <div className="mb-8">
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm text-muted-foreground">
@@ -487,47 +550,83 @@ export default function SymptomsPage() {
               {currentQuestion.required && <CardDescription>This question is required</CardDescription>}
             </CardHeader>
             <CardContent className="space-y-4">
-              
               {currentQuestion.type === "multiple-choice" && (
-                <RadioGroup
-                  value={answers[currentQuestion.id] || ""}
-                  onValueChange={(value) => handleAnswer(currentQuestion.id, value)}
-                >
-                  {currentQuestion.options?.map((option) => (
-                    <div key={option} className="flex items-center space-x-2">
-                      <RadioGroupItem value={option} id={option} />
-                      <Label htmlFor={option} className="cursor-pointer">
-                        {option}
+                <div className="grid gap-3">
+                  {currentQuestion.options?.map((option) => {
+                    const isSelected = answers[currentQuestion.id] === option
+                    return (
+                      <div
+                        key={option}
+                        onClick={() => handleAnswer(currentQuestion.id, option)}
+                        className={`flex items-center justify-between p-4 border rounded-xl cursor-pointer transition-all ${
+                          isSelected
+                            ? "border-emerald-500 bg-emerald-950/40 text-emerald-300"
+                            : "border-border hover:bg-muted/40 text-foreground"
+                        }`}
+                      >
+                        <span className="text-sm font-medium">{option}</span>
+                        {isSelected && (
+                          <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
+                        )}
+                      </div>
+                    )
+                  })}
+
+                  {/* Render conditional description area for "Other" option in Question 3 */}
+                  {currentQuestion.id === "primary_symptom" && answers[currentQuestion.id] === "Other" && (
+                    <div className="mt-4 space-y-2">
+                      <Label htmlFor="other_details" className="text-xs font-semibold text-muted-foreground">
+                        Please describe your specific symptoms in detail
                       </Label>
+                      <Textarea
+                        id="other_details"
+                        placeholder="Please describe your specific symptoms in detail..."
+                        value={answers.primary_symptom_other || ""}
+                        onChange={(e) => handleAnswer("primary_symptom_other", e.target.value)}
+                        className="min-h-[100px]"
+                      />
                     </div>
-                  ))}
-                </RadioGroup>
+                  )}
+                </div>
               )}
 
               {currentQuestion.type === "checkbox" && (
-                <div className="space-y-3">
-                  {currentQuestion.options?.map((option) => (
-                    <div key={option} className="flex items-center space-x-2">
-                      <Checkbox
-                        id={option}
-                        checked={(answers[currentQuestion.id] || []).includes(option)}
-                        onCheckedChange={(checked) => {
-                          const current = answers[currentQuestion.id] || []
-                          if (checked) {
-                            handleAnswer(currentQuestion.id, [...current, option])
+                <div className="grid gap-3">
+                  {currentQuestion.options?.map((option) => {
+                    const selectedList = answers[currentQuestion.id] || []
+                    const isSelected = selectedList.includes(option)
+                    return (
+                      <div
+                        key={option}
+                        onClick={() => {
+                          let nextList
+                          if (isSelected) {
+                            nextList = selectedList.filter((item: string) => item !== option)
                           } else {
-                            handleAnswer(
-                              currentQuestion.id,
-                              current.filter((item: string) => item !== option),
-                            )
+                            if (option === "None of the above") {
+                              nextList = [option]
+                            } else {
+                              nextList = [
+                                ...selectedList.filter((item: string) => item !== "None of the above"),
+                                option,
+                              ]
+                            }
                           }
+                          handleAnswer(currentQuestion.id, nextList)
                         }}
-                      />
-                      <Label htmlFor={option} className="cursor-pointer">
-                        {option}
-                      </Label>
-                    </div>
-                  ))}
+                        className={`flex items-center justify-between p-4 border rounded-xl cursor-pointer transition-all ${
+                          isSelected
+                            ? "border-emerald-500 bg-emerald-950/40 text-emerald-300"
+                            : "border-border hover:bg-muted/40 text-foreground"
+                        }`}
+                      >
+                        <span className="text-sm font-medium">{option}</span>
+                        {isSelected && (
+                          <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               )}
 
@@ -546,10 +645,11 @@ export default function SymptomsPage() {
                     <span>1 - Mild</span>
                     <span>10 - Severe</span>
                   </div>
-                  <div className="grid grid-cols-10 gap-2">
+                  <div className="grid grid-cols-5 sm:grid-cols-10 gap-2">
                     {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
                       <Button
                         key={num}
+                        type="button"
                         variant={answers[currentQuestion.id] === num.toString() ? "default" : "outline"}
                         size="sm"
                         onClick={() => handleAnswer(currentQuestion.id, num.toString())}
@@ -569,14 +669,7 @@ export default function SymptomsPage() {
               <ChevronLeft className="w-4 h-4 mr-2" />
               Previous
             </Button>
-            <Button
-              onClick={nextStep}
-              disabled={
-                currentQuestion.required &&
-                (!answers[currentQuestion.id] ||
-                  (Array.isArray(answers[currentQuestion.id]) && answers[currentQuestion.id].length === 0))
-              }
-            >
+            <Button onClick={nextStep} disabled={isNextDisabled()}>
               {currentStep === questions.length - 1 ? "Get Assessment" : "Next"}
               <ChevronRight className="w-4 h-4 ml-2" />
             </Button>

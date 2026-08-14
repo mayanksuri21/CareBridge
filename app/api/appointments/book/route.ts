@@ -5,11 +5,11 @@ import { createClient } from "@supabase/supabase-js"
 
 function parseTimeString(timeStr: string) {
   const [time, modifier] = timeStr.split(" ")
-  let [hours, minutes] = time.split(":").map(Number)
-  if (hours === 12) {
+  let [hours, minutes] = (time || "00:00").split(":").map(Number)
+  if (hours === 12 && modifier === "AM") {
     hours = 0
   }
-  if (modifier === "PM") {
+  if (modifier === "PM" && hours !== 12) {
     hours += 12
   }
   return { hour: hours, minute: minutes, durationMin: 45 }
@@ -21,8 +21,7 @@ export async function POST(request: NextRequest) {
 
   let supabase: any
 
-  // 1. Initialize Supabase Client
-  // If service role key is available, use it to bypass RLS
+  // 1. Prioritize Service Role Client (Bypasses RLS completely)
   if (serviceRoleKey) {
     supabase = createClient(supabaseUrl, serviceRoleKey, {
       auth: {
@@ -31,7 +30,7 @@ export async function POST(request: NextRequest) {
       },
     })
   } else {
-    // Fall back to server client with cookies context to load authenticated browser session
+    // Fallback: SSR Client
     const cookieStore = cookies()
     supabase = createServerClient(supabaseUrl, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
       cookies: {
@@ -41,12 +40,12 @@ export async function POST(request: NextRequest) {
         set(name, value, options) {
           try {
             cookieStore.set({ name, value, ...options })
-          } catch {}
+          } catch { }
         },
         remove(name, options) {
           try {
             cookieStore.set({ name, value: "", ...options })
-          } catch {}
+          } catch { }
         },
       },
     })
@@ -60,15 +59,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
     }
 
-    // 2. Calculate time slots ranges
+    // 2. Compute full ISO Date string
     const [y, m, d] = appointmentDate.split("-").map(Number)
     const timeObj = parseTimeString(timeSlot)
     const start = new Date(Date.UTC(y, m - 1, d, timeObj.hour, timeObj.minute, 0, 0))
     const end = new Date(start.getTime() + timeObj.durationMin * 60 * 1000)
 
-    // 3. Optional: Create/read slot inside schedule_slots (wrapped to prevent RLS failures from blocking bookings)
+    // 3. Optional: schedule_slots handling (Safe try-catch)
     let slotId: string | null = null
-
     try {
       const { data: existingSlot } = await supabase
         .from("schedule_slots")
@@ -81,104 +79,91 @@ export async function POST(request: NextRequest) {
       slotId = (existingSlot as any)?.id ?? null
 
       if (!slotId) {
-        const { data: newSlot, error: insertSlotErr } = await supabase
+        const { data: newSlot } = await supabase
           .from("schedule_slots")
           .insert({
             doctor_id: doctorId,
             start_time: start.toISOString(),
             end_time: end.toISOString(),
-            is_booked: true
+            is_booked: true,
           })
           .select("id")
           .maybeSingle()
 
-        if (!insertSlotErr && newSlot) {
-          slotId = (newSlot as any)?.id ?? null
-        } else {
-          console.warn("Optional schedule slot creation failed (bypassing):", insertSlotErr?.message)
-        }
+        slotId = (newSlot as any)?.id ?? null
       } else {
-        await supabase
-          .from("schedule_slots")
-          .update({ is_booked: true })
-          .eq("id", slotId)
+        await supabase.from("schedule_slots").update({ is_booked: true }).eq("id", slotId)
       }
-    } catch (slotErr) {
-      console.warn("Optional schedule_slots table operations failed (bypassing):", slotErr)
+    } catch (e) {
+      console.warn("schedule_slots bypass:", e)
     }
 
-    // 4. Create appointment payload with dynamic columns fallback check
-    const appointmentPayload: any = {
-      patient_id: patientId,
-      doctor_id: doctorId,
-      slot_id: slotId,
-      appointment_date: appointmentDate,
-      time_slot: timeSlot,
-      reason: reason || "No description provided",
-      symptoms: symptoms || null,
-      status: "pending"
-    }
+    // 4. Robust Dynamic Appointments Table Insertion
+    const fullReason = `${reason || "Consultation Request"}\n\nSelected Date: ${appointmentDate}\nTime Slot: ${timeSlot}${symptoms ? `\nSymptoms: ${symptoms}` : ""}`
 
+    // Attempt 1: Schema with scheduled_at timestamp / slot_id
     let { data: appt, error: apptErr } = await supabase
       .from("appointments")
-      .insert(appointmentPayload)
+      .insert({
+        doctor_id: doctorId,
+        patient_id: patientId,
+        slot_id: slotId,
+        scheduled_at: start.toISOString(),
+        status: "pending",
+        reason: fullReason,
+      })
       .select("id")
       .maybeSingle()
 
+    // Attempt 2: Schema with appointment_date & time_slot columns
     if (apptErr) {
-      console.warn("First insert attempt failed (likely missing custom columns):", apptErr.message)
-
-      // Fallback 1: If custom columns are missing, insert only standard columns and append info to reason
-      if (apptErr.message.includes("column") || apptErr.code === "42703") {
-        console.log("Retrying with schema-aligned standard columns...")
-        const standardPayload = {
-          patient_id: patientId,
+      console.warn("Attempt 1 failed, trying with appointment_date column:", apptErr.message)
+      const res = await supabase
+        .from("appointments")
+        .insert({
           doctor_id: doctorId,
-          slot_id: slotId,
-          reason: `${reason || "No description provided"}\n\nPreferred Date: ${appointmentDate}\nTime Slot: ${timeSlot}${symptoms ? `\nSymptoms: ${symptoms}` : ""}`,
-          status: "pending"
-        }
-
-        const { data: appt2, error: apptErr2 } = await supabase
-          .from("appointments")
-          .insert(standardPayload)
-          .select("id")
-          .maybeSingle()
-
-        appt = appt2
-        apptErr = apptErr2
-      }
-
-      // Fallback 2: If status check constraint restricts "pending" status values
-      if (apptErr && (apptErr.message.includes("check constraint") || apptErr.code === "23514")) {
-        console.log("Retrying fallback with status: booked...")
-        const finalPayload = {
           patient_id: patientId,
-          doctor_id: doctorId,
           slot_id: slotId,
-          reason: `${reason || "No description provided"}\n\nPreferred Date: ${appointmentDate}\nTime Slot: ${timeSlot}${symptoms ? `\nSymptoms: ${symptoms}` : ""}`,
-          status: "booked"
-        }
+          appointment_date: appointmentDate,
+          time_slot: timeSlot,
+          status: "pending",
+          reason: reason || "Consultation Request",
+          symptoms: symptoms || null,
+        })
+        .select("id")
+        .maybeSingle()
 
-        const { data: appt3, error: apptErr3 } = await supabase
-          .from("appointments")
-          .insert(finalPayload)
-          .select("id")
-          .maybeSingle()
+      appt = res.data
+      apptErr = res.error
+    }
 
-        appt = appt3
-        apptErr = apptErr3
-      }
+    // Attempt 3: Schema with standard basic columns (date, status, reason)
+    if (apptErr) {
+      console.warn("Attempt 2 failed, trying minimal columns:", apptErr.message)
+      const res = await supabase
+        .from("appointments")
+        .insert({
+          doctor_id: doctorId,
+          patient_id: patientId,
+          slot_id: slotId,
+          status: "pending",
+          reason: fullReason,
+        })
+        .select("id")
+        .maybeSingle()
+
+      appt = res.data
+      apptErr = res.error
     }
 
     if (apptErr || !appt) {
-      console.error("Booking post final error:", apptErr)
-      return NextResponse.json({ error: apptErr?.message || "Insert failed" }, { status: 500 })
+      console.error("Final insert failed:", apptErr)
+      return NextResponse.json({ error: apptErr?.message || "Booking insert failed" }, { status: 500 })
     }
 
-    return NextResponse.json({ success: true, appointmentId: (appt as any)?.id })
+    return NextResponse.json({ success: true, appointmentId: (appt as any)?.id }, { status: 200 })
   } catch (err: any) {
-    console.error("Booking post route error:", err)
+    console.error("POST /api/appointments/book error:", err)
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
