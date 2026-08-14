@@ -19,7 +19,7 @@ export function PatientPrescriptionsSection({ fallbackPrescriptions = [] }: Pati
   useEffect(() => {
     const loadPrescriptions = async () => {
       try {
-        const response = await fetch("/api/prescription/save")
+        const response = await fetch("/api/prescriptions")
         const payload = await response.json() as { prescriptions?: PrintablePrescription[] }
         const records = response.ok ? payload.prescriptions ?? [] : []
         setPrescriptions(records.length > 0 ? records : fallbackPrescriptions)

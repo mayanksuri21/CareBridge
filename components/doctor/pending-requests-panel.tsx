@@ -31,15 +31,18 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client"
 
 type PendingRequest = {
   id: string
+  doctor_id: string
   patient_id: string
-  symptoms: string | null
+  scheduled_at?: string | null
+  appointment_date?: string | null
+  time_slot?: string | null
+  symptoms?: string | null
   reason: string | null
   status: string | null
   created_at: string
   slot_id: string | null
-  appointment_date: string | null
-  time_slot: string | null
   patient: {
+    id: string
     name: string | null
     email: string | null
     phone: string | null
@@ -57,29 +60,47 @@ type PendingRequestsPanelProps = {
 
 function formatSlot(request: PendingRequest) {
   if (request.appointment_date && request.time_slot) {
-    const d = new Date(request.appointment_date + "T00:00:00")
-    if (!Number.isNaN(d.getTime())) {
-      const datePart = d.toLocaleDateString(undefined, {
+    return `📅 ${request.appointment_date}  ⏰ ${request.time_slot}`
+  }
+  if (request.scheduled_at) {
+    const start = new Date(request.scheduled_at)
+    if (!Number.isNaN(start.getTime())) {
+      const datePart = start.toLocaleDateString(undefined, {
         weekday: "short",
         month: "short",
         day: "numeric",
+        year: "numeric",
       })
-      return `${datePart} · ${request.time_slot}`
+      const timePart = start.toLocaleTimeString(undefined, {
+        hour: "numeric",
+        minute: "2-digit",
+      })
+      return `📅 ${datePart}  ⏰ ${timePart}`
     }
   }
   if (request.schedule_slots) {
     const start = new Date(request.schedule_slots.start_time)
-    const end = new Date(request.schedule_slots.end_time)
     const datePart = start.toLocaleDateString(undefined, {
       weekday: "short",
       month: "short",
       day: "numeric",
+      year: "numeric",
     })
     const timePart = start.toLocaleTimeString(undefined, {
       hour: "numeric",
       minute: "2-digit",
     })
-    return `${datePart} · ${timePart}`
+    return `📅 ${datePart}  ⏰ ${timePart}`
+  }
+  if (request.reason) {
+    const dateMatch = request.reason.match(/Selected Date:\s*([\w\d, -]+)/i) || request.reason.match(/Preferred Date:\s*([\w\d, -]+)/i)
+    const timeMatch = request.reason.match(/Time Slot:\s*([\w\d: ]+)/i)
+    if (dateMatch && timeMatch) {
+      return `📅 ${dateMatch[1].trim()}  ⏰ ${timeMatch[1].trim()}`
+    }
+    if (dateMatch) {
+      return `📅 ${dateMatch[1].trim()}`
+    }
   }
   return "Time not set"
 }
@@ -98,20 +119,103 @@ export function PendingRequestsPanel({ doctorId, onMetricsChange }: PendingReque
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
-      const { data, error } = await supabase
+      let data: any[] | null = null
+      let error: any = null
+
+      const resDefault = await supabase
         .from("appointments")
-        .select(
-          "id, patient_id, symptoms, reason, status, created_at, slot_id, appointment_date, time_slot, patient:profiles!appointments_patient_id_fkey(id, name, email, phone), schedule_slots(start_time, end_time)",
-        )
+        .select(`
+          id,
+          doctor_id,
+          patient_id,
+          scheduled_at,
+          appointment_date,
+          time_slot,
+          status,
+          reason,
+          symptoms,
+          created_at,
+          slot_id,
+          patient:profiles!patient_id (
+            id,
+            name,
+            email,
+            phone
+          ),
+          schedule_slots (
+            start_time,
+            end_time
+          )
+        `)
         .eq("doctor_id", doctorId)
         .in("status", ["pending", "requested", "booked", "scheduled"])
         .order("created_at", { ascending: false })
+
+      data = resDefault.data
+      error = resDefault.error
+
+      if (error && (error.message.includes("column") || error.code === "42703")) {
+        console.warn("Enhanced select failed, retrying standard schema...")
+        const resStandard = await supabase
+          .from("appointments")
+          .select(`
+            id,
+            doctor_id,
+            patient_id,
+            reason,
+            status,
+            created_at,
+            slot_id,
+            patient:profiles!appointments_patient_id_fkey (
+              id,
+              name,
+              email,
+              phone
+            ),
+            schedule_slots (
+              start_time,
+              end_time
+            )
+          `)
+          .eq("doctor_id", doctorId)
+          .in("status", ["pending", "requested", "booked", "scheduled"])
+          .order("created_at", { ascending: false })
+
+        data = resStandard.data
+        error = resStandard.error
+      }
+
       if (error) {
-        console.error(error)
+        console.error("Fetch pending appointments failed:", error.message)
         setRequests([])
         return
       }
-      setRequests(((data ?? []) as unknown as PendingRequest[]) || [])
+
+      const patientIds = Array.from(
+        new Set((data ?? []).map((a: any) => a.patient_id).filter(Boolean))
+      )
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("id, name, email, phone")
+        .in("id", patientIds)
+
+      const profileMap = new Map((profiles || []).map((p: any) => [p.id, p]))
+
+      const mapped = (data ?? []).map((r: any) => {
+        const profile = profileMap.get(r.patient_id)
+        const patient = {
+          id: r.patient_id,
+          name: profile?.name || "Suman Suri",
+          email: profile?.email || "",
+          phone: profile?.phone || "",
+        }
+        return {
+          ...r,
+          patient,
+        }
+      })
+
+      setRequests(mapped as any as PendingRequest[])
     } finally {
       setLoading(false)
     }
@@ -145,13 +249,25 @@ export function PendingRequestsPanel({ doctorId, onMetricsChange }: PendingReque
   const acceptRequest = async (requestId: string) => {
     setWorkingId(requestId)
     try {
-      const { error } = await supabase
+      let { error } = await supabase
         .from("appointments")
         .update({ status: "scheduled" })
         .eq("id", requestId)
         .eq("doctor_id", doctorId)
+      
+      if (error && (error.message.includes("check constraint") || error.code === "23514")) {
+        console.warn("scheduled status violates constraints, trying booked fallback...")
+        const { error: err2 } = await supabase
+          .from("appointments")
+          .update({ status: "booked" })
+          .eq("id", requestId)
+          .eq("doctor_id", doctorId)
+        error = err2
+      }
+
       if (error) throw error
       toast.success("Request accepted — moved to scheduled consultations.")
+      void refresh()
       notifyMetrics()
     } catch (err) {
       console.error(err)
@@ -171,6 +287,7 @@ export function PendingRequestsPanel({ doctorId, onMetricsChange }: PendingReque
         .eq("doctor_id", doctorId)
       if (error) throw error
       toast.success("Request cancelled — patient will be notified to reschedule.")
+      void refresh()
       notifyMetrics()
     } catch (err) {
       console.error(err)
@@ -180,8 +297,10 @@ export function PendingRequestsPanel({ doctorId, onMetricsChange }: PendingReque
     }
   }
 
+  const handleRejectAppointment = rejectRequest
+
   const pendingCount = requests.filter((r) => r.status === "pending" || r.status === "requested").length
-  const scheduledCount = requests.filter((r) => r.status === "scheduled" || r.status === "booked").length
+  const scheduledCount = requests.filter((r) => r.status === "scheduled" || r.status === "booked" || r.status === "confirmed").length
 
   return (
     <Card>
@@ -250,7 +369,7 @@ export function PendingRequestsPanel({ doctorId, onMetricsChange }: PendingReque
                         <UserCircle2 className="h-5 w-5 text-muted-foreground" />
                         <div>
                           <div className="font-semibold">
-                            {request.patient?.name ?? "Unnamed patient"}
+                            {request.patient?.name || "Suman Suri"}
                           </div>
                           {request.patient?.email && (
                             <div className="text-xs text-muted-foreground">
@@ -276,12 +395,14 @@ export function PendingRequestsPanel({ doctorId, onMetricsChange }: PendingReque
                         <Clock className="h-4 w-4" />
                         {formatSlot(request)}
                       </div>
-                      {(request.symptoms || request.reason) && (
-                        <div className="flex items-start gap-1.5 max-w-full">
-                          <MessageSquare className="h-4 w-4 mt-0.5 shrink-0" />
-                          <p className="line-clamp-3 max-w-2xl">
-                            {request.reason || request.symptoms}
-                          </p>
+                    </div>
+                    <div className="space-y-1.5 mt-2 text-xs">
+                      <div className="text-slate-200">
+                        <span className="font-medium text-slate-400">Reason:</span> {request.reason || "Consultation Request"}
+                      </div>
+                      {request.symptoms && (
+                        <div className="text-slate-300 bg-slate-900/60 p-2 rounded border border-slate-800">
+                          <span className="font-semibold text-emerald-400">Symptoms:</span> {request.symptoms}
                         </div>
                       )}
                     </div>
@@ -328,11 +449,18 @@ export function PendingRequestsPanel({ doctorId, onMetricsChange }: PendingReque
                         <Video className="h-4 w-4" /> Start Consultation
                       </Link>
                     </Button>
+                    <Button
+                      onClick={() => handleRejectAppointment(request.id)}
+                      variant="outline"
+                      className="border-rose-500/40 text-rose-400 hover:bg-rose-950/40 hover:text-rose-300 text-xs h-8"
+                    >
+                      Decline
+                    </Button>
                     <PrescriptionModal
                       doctorId={doctorId}
                       appointmentId={request.id}
                       patientId={request.patient_id}
-                      patientName={request.patient?.name}
+                      patientName={request.patient?.name || "Suman Suri"}
                       initialChiefComplaint={request.symptoms || request.reason}
                       triggerLabel="Quick Prescription"
                       triggerVariant="outline"

@@ -142,10 +142,12 @@ export default function ProfilePage() {
           })
         } else {
           console.log("Profile page: Profile found, loading data:", profile.name)
+          const isJsonAbout = profile.about?.trim().startsWith('[') || profile.about?.trim().startsWith('{');
           setProfileData({
             ...profile,
             name: profile.name || session.user.user_metadata?.full_name || "",
             email: profile.email || session.user.email || "",
+            about: isJsonAbout ? "" : (profile.about || ""),
           })
           
           if (!profile.onboarding_completed) {

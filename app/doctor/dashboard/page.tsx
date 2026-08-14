@@ -1,7 +1,7 @@
 import Link from "next/link"
 import { CalendarCheck, Stethoscope } from "lucide-react"
 
-import { DoctorSlotManager, type SavedSlot } from "@/components/doctor/doctor-slot-manager"
+import { DoctorSlotManager } from "@/components/doctor/doctor-slot-manager"
 import { PendingRequestsPanel } from "@/components/doctor/pending-requests-panel"
 import { PrescriptionModal } from "@/components/doctor/prescription-modal"
 import { LiveMetrics } from "@/components/doctor/live-metrics"
@@ -20,7 +20,7 @@ type DoctorProfile = {
   specialty: string | null
   phone: string | null
   language: string | null
-  available_slots: SavedSlot[] | null
+  available_slots: any[] | null
 }
 
 export default async function DoctorDashboard() {
@@ -31,7 +31,7 @@ export default async function DoctorDashboard() {
   const [{ data: profile }, { count: totalAppointments }, { count: totalPrescriptions }] = await Promise.all([
     supabase
       .from("profiles")
-      .select("id, name, email, specialty, phone, language, available_slots")
+      .select("id, name, email, specialty, phone, language")
       .eq("id", doctorId)
       .maybeSingle(),
 
@@ -47,49 +47,70 @@ export default async function DoctorDashboard() {
   ])
 
   const today = new Date()
-  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate())
-  const startOfTomorrow = new Date(startOfToday)
-  startOfTomorrow.setDate(startOfTomorrow.getDate() + 1)
+  const todayStr = today.toISOString().split("T")[0]
+  const todayDateStr = today.toDateString()
 
-  const [{ count: todayAppointments }, { count: todayCompleted }, { data: doctorRow }] = await Promise.all([
+  const [{ data: allAppointments }, { data: doctorRow }] = await Promise.all([
     supabase
       .from("appointments")
-      .select("*", { count: "exact", head: true })
-      .eq("doctor_id", doctorId)
-      .gte("created_at", startOfToday.toISOString())
-      .lt("created_at", startOfTomorrow.toISOString()),
-
-    supabase
-      .from("appointments")
-      .select("*", { count: "exact", head: true })
-      .eq("doctor_id", doctorId)
-      .eq("status", "completed")
-      .gte("created_at", startOfToday.toISOString())
-      .lt("created_at", startOfTomorrow.toISOString()),
+      .select("id, status, created_at, scheduled_at, appointment_date")
+      .eq("doctor_id", doctorId),
 
     supabase
       .from("doctors")
-      .select("available_slots")
+      .select("id")
       .eq("id", doctorId)
       .maybeSingle(),
   ])
 
-  let savedSlots: SavedSlot[] = []
-  if (doctorRow && Array.isArray((doctorRow as any).available_slots)) {
-    savedSlots = (doctorRow as any).available_slots
-  } else if (profile && Array.isArray((profile as any).available_slots)) {
-    savedSlots = (profile as any).available_slots
+  const todayScheduled = (allAppointments ?? []).filter((appt) => {
+    const isScheduled = appt.status === "scheduled" || appt.status === "confirmed" || appt.status === "booked"
+    if (!isScheduled) return false
+
+    if (appt.appointment_date === todayStr) return true
+    if (appt.scheduled_at) {
+      const d = new Date(appt.scheduled_at)
+      if (!Number.isNaN(d.getTime()) && d.toDateString() === todayDateStr) {
+        return true
+      }
+    }
+    return false
+  })
+  const todayAppointments = todayScheduled.length
+
+  const todayCompleted = (allAppointments ?? []).filter((appt) => {
+    const isCompleted = appt.status === "completed"
+    if (!isCompleted) return false
+
+    if (appt.appointment_date === todayStr) return true
+    if (appt.scheduled_at) {
+      const d = new Date(appt.scheduled_at)
+      if (!Number.isNaN(d.getTime()) && d.toDateString() === todayDateStr) {
+        return true
+      }
+    }
+    if (appt.created_at) {
+      const d = new Date(appt.created_at)
+      if (!Number.isNaN(d.getTime()) && d.toDateString() === todayDateStr) {
+        return true
+      }
+    }
+    return false
+  }).length
+
+  // Slots will load dynamically within the Slot Manager client component
+
+  const doctor: DoctorProfile = {
+    id: doctorId,
+    name: profile?.name || result.user.email?.split("@")[0] || "Doctor",
+    email: profile?.email || result.user.email || null,
+    specialty: profile?.specialty || null,
+    phone: profile?.phone || null,
+    language: profile?.language || null,
+    available_slots: null,
   }
 
-  const doctor: DoctorProfile = (profile ?? {
-    id: doctorId,
-    name: result.user.email?.split("@")[0] ?? "Doctor",
-    email: result.user.email,
-    specialty: null,
-    phone: null,
-    language: null,
-    available_slots: savedSlots,
-  }) as DoctorProfile
+  const doctorName = profile?.name || ("Dr. " + (profile?.name || "Doctor"))
 
   const greeting = (() => {
     const hour = today.getHours()
@@ -138,21 +159,23 @@ export default async function DoctorDashboard() {
           <div>
             <p className="text-sm text-muted-foreground">{greeting},</p>
             <h1 className="text-3xl md:text-4xl font-bold tracking-tight">
-              {doctor.name ?? "Doctor"}
+              {doctorName}
               {doctor.specialty && (
                 <span className="ml-3 text-base md:text-lg font-medium text-muted-foreground">
                   {doctor.specialty}
                 </span>
               )}
             </h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {doctor.email ?? result.user.email ?? ""}
+            <div className="mt-2 flex flex-wrap items-center gap-3">
               {result.application?.status && (
-                <Badge variant="secondary" className="ml-3">
+                <Badge variant="secondary" className="font-semibold">
                   Verified &middot; {result.application.status}
                 </Badge>
               )}
-            </p>
+              <span className="text-sm text-muted-foreground">
+                {doctor.email ?? result.user.email ?? ""}
+              </span>
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button asChild variant="outline" className="gap-2">
@@ -178,7 +201,7 @@ export default async function DoctorDashboard() {
 
       <section className="container mx-auto grid gap-4 px-4 pb-4 lg:grid-cols-[1.2fr_1fr]">
         <PendingRequestsPanel doctorId={doctorId} />
-        <DoctorSlotManager doctorId={doctorId} initialSavedSlots={savedSlots} />
+        <DoctorSlotManager doctorId={doctorId} />
       </section>
 
       <section className="container mx-auto px-4 pb-16">

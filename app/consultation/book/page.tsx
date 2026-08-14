@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { ArrowLeft, Calendar, Clock, Stethoscope, CheckCircle2, CalendarDays, AlertCircle, Loader2 } from "lucide-react"
+import { ArrowLeft, Calendar, Clock, Stethoscope, CheckCircle2, CalendarDays, AlertCircle, Loader2, AlertTriangle } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -28,6 +28,7 @@ type DoctorRow = {
     minute: number
     durationMin: number
   }> | null
+  active_slots?: string[]
 }
 
 const FALLBACK_SLOTS: Array<{
@@ -57,6 +58,33 @@ function buildSlotDate(date: string | null, slot: { hour: number; minute: number
   return { start, end }
 }
 
+function parseTimeString(timeStr: string): { label: string; hour: number; minute: number; durationMin: number } {
+  try {
+    const match = timeStr.match(/^(\d+):(\d+)\s*(AM|PM)$/i)
+    if (match) {
+      let hour = parseInt(match[1], 10)
+      const minute = parseInt(match[2], 10)
+      const ampm = match[3].toUpperCase()
+      
+      if (ampm === "PM" && hour < 12) {
+        hour += 12
+      } else if (ampm === "AM" && hour === 12) {
+        hour = 0
+      }
+      
+      return {
+        label: timeStr,
+        hour,
+        minute,
+        durationMin: 45
+      }
+    }
+  } catch (e) {
+    console.error("Failed to parse time string:", timeStr, e)
+  }
+  return { label: timeStr, hour: 12, minute: 0, durationMin: 45 }
+}
+
 export default function BookConsultationPage() {
   const router = useRouter()
   const supabase = useMemo(() => createSupabaseBrowserClient(), [])
@@ -72,6 +100,67 @@ export default function BookConsultationPage() {
   const [symptoms, setSymptoms] = useState("")
   const [booking, setBooking] = useState(false)
   const [booked, setBooked] = useState<string | null>(null)
+  const [dateSlots, setDateSlots] = useState<string[]>([])
+  const [isLeave, setIsLeave] = useState<boolean>(false)
+  const [dateSlotsLoading, setDateSlotsLoading] = useState(false)
+  const [bookedSlotsForDate, setBookedSlotsForDate] = useState<string[]>([])
+
+  useEffect(() => {
+    if (!selectedDoctor || !selectedDate) {
+      setDateSlots([])
+      setIsLeave(false)
+      return
+    }
+
+    let cancelled = false
+    setDateSlotsLoading(true)
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/doctors/slots?doctorId=${selectedDoctor}&date=${selectedDate}`)
+        if (!res.ok) throw new Error("Failed to fetch slots")
+        const json = await res.json()
+        if (!cancelled) {
+          setIsLeave(json.isLeave || false)
+          setDateSlots(json.slots || [])
+        }
+      } catch (err) {
+        console.error("Failed to fetch slots for date:", err)
+      } finally {
+        if (!cancelled) setDateSlotsLoading(false)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedDoctor, selectedDate])
+
+  useEffect(() => {
+    if (!selectedDoctor || !selectedDate) {
+      setBookedSlotsForDate([])
+      return
+    }
+
+    let cancelled = false
+    ;(async () => {
+      const { data, error } = await supabase
+        .from("appointments")
+        .select("time_slot")
+        .eq("doctor_id", selectedDoctor)
+        .eq("appointment_date", selectedDate)
+        .neq("status", "cancelled")
+
+      if (!error && data && !cancelled) {
+        setBookedSlotsForDate(data.map((item) => item.time_slot).filter(Boolean) as string[])
+      } else {
+        setBookedSlotsForDate([])
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedDoctor, selectedDate, supabase])
 
   const todayISO = useMemo(() => {
     const d = new Date()
@@ -80,70 +169,51 @@ export default function BookConsultationPage() {
   }, [])
 
   const selectedDoctorData = doctors.find((d) => d.id === selectedDoctor) ?? null
+  
   const activeSlotsForSelectedDoctor = useMemo(() => {
-    if (!selectedDoctorData) return FALLBACK_SLOTS
-    if (Array.isArray(selectedDoctorData.available_slots) && selectedDoctorData.available_slots.length > 0) {
-      return selectedDoctorData.available_slots
+    if (!selectedDoctorData) return []
+    if (!selectedDate) {
+      if (Array.isArray(selectedDoctorData.active_slots) && selectedDoctorData.active_slots.length > 0) {
+        return selectedDoctorData.active_slots.map((label) => parseTimeString(label))
+      }
+      return []
     }
-    return FALLBACK_SLOTS
-  }, [selectedDoctorData])
+    return dateSlots.map((label) => parseTimeString(label))
+  }, [selectedDoctorData, selectedDate, dateSlots])
+
+  const noSlotsConfigured = !!selectedDate && activeSlotsForSelectedDoctor.length === 0
 
   useEffect(() => {
     let cancelled = false
     setDoctorsLoading(true)
     ;(async () => {
       try {
-        const { data: profileDoctors, error: profilesErr } = await supabase
-          .from("profiles")
-          .select("id, name, specialty, language, available_slots, role")
-          .eq("role", "doctor")
-          .order("name", { nullsFirst: false })
-
-        if (profilesErr) {
-          console.error("Failed to load doctor profiles:", profilesErr)
-        }
-
-        const { data: verifications, error: verErr } = await supabase
-          .from("doctor_verification_applications")
-          .select("doctor_id, status")
-
-        if (verErr) {
-          console.error("Failed to load verification statuses:", verErr)
-        }
+        const res = await fetch("/api/doctors")
+        if (!res.ok) throw new Error("Failed to fetch doctors")
+        const data = await res.json()
+        const doctorsList = data.doctors || []
 
         if (cancelled) return
 
-        const verificationMap = new Map<string, VerificationStatus>()
-        for (const v of verifications ?? []) {
-          verificationMap.set(v.doctor_id, (v.status as VerificationStatus) ?? null)
-        }
+        const parsedDoctors: DoctorRow[] = doctorsList.map((d: any) => {
+          const slots = Array.isArray(d.active_slots)
+            ? d.active_slots.map((label: string) => parseTimeString(label))
+            : null
 
-        const combined: DoctorRow[] = (profileDoctors ?? []).map((row: any) => {
-          const status = verificationMap.get(row.id) ?? null
-          const slots = Array.isArray(row.available_slots) ? row.available_slots : null
           return {
-            id: row.id,
-            name: row.name ?? null,
-            specialty: row.specialty ?? null,
-            language: row.language ?? null,
-            verification_status: status,
+            id: d.id,
+            name: d.name,
+            specialty: d.specialty,
+            language: d.language || null,
+            verification_status: d.verification_status || "approved",
             available_slots: slots,
+            active_slots: d.active_slots || []
           }
         })
 
-        combined.sort((a, b) => {
-          const rank = (s: VerificationStatus) =>
-            s === "approved" ? 0 : s === "pending" ? 1 : s === "rejected" ? 2 : 3
-          const byStatus = rank(a.verification_status) - rank(b.verification_status)
-          if (byStatus !== 0) return byStatus
-          const aName = a.name ?? ""
-          const bName = b.name ?? ""
-          return aName.localeCompare(bName)
-        })
-
-        setDoctors(combined)
+        setDoctors(parsedDoctors)
       } catch (err) {
-        console.error(err)
+        console.error("Failed to load doctor profiles:", err)
       } finally {
         if (!cancelled) setDoctorsLoading(false)
       }
@@ -151,7 +221,7 @@ export default function BookConsultationPage() {
     return () => {
       cancelled = true
     }
-  }, [supabase])
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -183,8 +253,7 @@ export default function BookConsultationPage() {
     try {
       const slotIdx = parseInt(selectedSlotIndex, 10)
       const slot = activeSlotsForSelectedDoctor[slotIdx] ?? null
-      const range = buildSlotDate(selectedDate, slot)
-      if (!range || !slot) {
+      if (!slot) {
         toast.error("Invalid date or time selected.")
         return
       }
@@ -196,64 +265,35 @@ export default function BookConsultationPage() {
         return
       }
 
-      let slotId: string | null = null
-      try {
-        const { data: existingSlot } = await supabase
-          .from("schedule_slots")
-          .select("id, is_booked")
-          .eq("doctor_id", selectedDoctor)
-          .gte("start_time", range.start.toISOString())
-          .lt("end_time", range.end.toISOString())
-          .maybeSingle()
-        slotId = (existingSlot as any)?.id ?? null
-      } catch {
-      }
+      const fullReason = symptoms.trim() ? `${reason.trim()}\n\nSymptoms: ${symptoms.trim()}` : reason.trim()
 
-      if (!slotId) {
-        try {
-          const { data: newSlot } = await supabase
-            .from("schedule_slots")
-            .insert({
-              doctor_id: selectedDoctor,
-              start_time: range.start.toISOString(),
-              end_time: range.end.toISOString(),
-              is_booked: false,
-            })
-            .select("id")
-            .maybeSingle()
-          slotId = (newSlot as any)?.id ?? null
-        } catch (createErr) {
-          console.warn("slot creation failed, continuing without slot_id", createErr)
-        }
-      }
+      const res = await fetch("/api/appointments/book", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          doctorId: selectedDoctor,
+          patientId: user.id,
+          patientName: name,
+          patientEmail: email,
+          appointmentDate: selectedDate,
+          timeSlot: slot.label,
+          reason: fullReason
+        })
+      })
 
-      const symptomsPayload = symptoms.trim() || reason.trim()
+      const result = await res.json()
 
-      const appointmentPayload: any = {
-        patient_id: user.id,
-        doctor_id: selectedDoctor,
-        slot_id: slotId,
-        appointment_date: selectedDate,
-        time_slot: slot.label,
-        reason: reason.trim(),
-        symptoms: symptomsPayload,
-        status: "pending",
-      }
-
-      const { data: appt, error: apptErr } = await supabase
-        .from("appointments")
-        .insert(appointmentPayload)
-        .select("id")
-        .maybeSingle()
-
-      if (apptErr || !appt) {
-        console.error(apptErr)
-        toast.error("Unable to create your request. Please try again.")
+      if (!res.ok || result.error) {
+        console.error("Booking post error:", result?.error)
+        toast.error(`Unable to create appointment request: ${result?.error || "Unknown error"}`)
         return
       }
 
-      setBooked(appt.id)
+      setBooked(result.appointmentId)
       toast.success("Consultation request submitted! Your doctor will review it shortly.")
+    } catch (err: any) {
+      console.error(err)
+      toast.error("An error occurred during booking. Please try again.")
     } finally {
       setBooking(false)
     }
@@ -263,10 +303,19 @@ export default function BookConsultationPage() {
     selectedSlotIndex,
     reason,
     symptoms,
-    supabase,
-    router,
+    name,
+    email,
     activeSlotsForSelectedDoctor,
+    supabase,
+    router
   ])
+
+  const resetForm = useCallback(() => {
+    setBooked(null)
+    setSelectedSlotIndex("")
+    setReason("")
+    setSymptoms("")
+  }, [])
 
   return (
     <div className="min-h-screen bg-background">
@@ -295,34 +344,25 @@ export default function BookConsultationPage() {
       </header>
 
       <div className="container mx-auto px-4 py-8">
-        {booked && (
-          <div className="mx-auto max-w-3xl mb-6 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-5 text-sm text-emerald-800 dark:text-emerald-300">
-            <div className="flex flex-wrap items-start gap-3">
-              <CheckCircle2 className="h-5 w-5 shrink-0 mt-0.5" />
-              <div className="flex-1 space-y-2">
-                <p className="font-medium">Consultation request submitted successfully!</p>
-                <p className="text-emerald-700/80 dark:text-emerald-300/90 text-xs">
-                  Your doctor will review your request and confirm the appointment time. You can track its status from
-                  your dashboard.
-                </p>
-                <div className="flex flex-wrap gap-2 pt-1">
-                  <Button asChild size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5">
-                    <Link href="/patient/dashboard">
-                      <CalendarDays className="h-4 w-4" /> Go to Your History
-                    </Link>
-                  </Button>
-                  <Button asChild size="sm" variant="outline" className="gap-1.5">
-                    <Link href={`/consultation/${booked}`}>
-                      <Clock className="h-4 w-4" /> View Request Details
-                    </Link>
-                  </Button>
-                </div>
+        <div className="max-w-3xl mx-auto space-y-6">
+          {booked ? (
+            <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-2xl p-8 text-center space-y-4">
+              <CheckCircle2 className="w-16 h-16 text-emerald-400 mx-auto"/>
+              <h2 className="text-2xl font-bold text-white">Consultation Request Sent!</h2>
+              <p className="text-slate-300 max-w-md mx-auto">
+                Your request for {selectedDate} at {activeSlotsForSelectedDoctor[parseInt(selectedSlotIndex, 10)]?.label || ""} with Dr. {selectedDoctorData?.name || "Doctor"} has been submitted.
+              </p>
+              <div className="flex justify-center gap-4 pt-4">
+                <Button asChild className="bg-emerald-600 hover:bg-emerald-500 text-white">
+                  <Link href="/patient/dashboard">Go to My Dashboard</Link>
+                </Button>
+                <Button onClick={resetForm} variant="outline">
+                  Book Another
+                </Button>
               </div>
             </div>
-          </div>
-        )}
-
-        <div className="max-w-3xl mx-auto space-y-6">
+          ) : (
+            <>
           <Card>
             <CardHeader>
               <CardTitle>Select Doctor and Time</CardTitle>
@@ -406,7 +446,7 @@ export default function BookConsultationPage() {
                   <Select
                     value={selectedSlotIndex}
                     onValueChange={setSelectedSlotIndex}
-                    disabled={!selectedDate || activeSlotsForSelectedDoctor.length === 0}
+                    disabled={!selectedDate || activeSlotsForSelectedDoctor.length === 0 || isLeave}
                   >
                     <SelectTrigger>
                       <SelectValue
@@ -415,26 +455,35 @@ export default function BookConsultationPage() {
                             ? "Pick a doctor first"
                             : !selectedDate
                               ? "Pick a date first"
-                              : activeSlotsForSelectedDoctor.length === 0
-                                ? "No slots configured"
-                                : "Select a time"
+                              : isLeave
+                                ? "Doctor is on leave"
+                                : noSlotsConfigured
+                                  ? "No slots configured"
+                                  : "Select a time"
                         }
                       />
                     </SelectTrigger>
                     <SelectContent>
                       {activeSlotsForSelectedDoctor.length === 0 && (
                         <SelectItem value="none" disabled>
-                          Doctor has not set availability yet
+                          {selectedDate
+                            ? isLeave
+                              ? "Doctor is on leave on this date"
+                              : "Doctor has no available consultation hours on this date"
+                            : "Doctor has not set availability yet"}
                         </SelectItem>
                       )}
-                      {activeSlotsForSelectedDoctor.map((s, idx) => (
-                        <SelectItem key={s.label + idx} value={String(idx)}>
-                          <div className="flex items-center">
-                            <Clock className="w-4 h-4 mr-2 text-primary" />
-                            {s.label}
-                          </div>
-                        </SelectItem>
-                      ))}
+                      {activeSlotsForSelectedDoctor.map((s, idx) => {
+                        const isSlotBooked = bookedSlotsForDate.includes(s.label)
+                        return (
+                          <SelectItem key={s.label + idx} value={String(idx)} disabled={isSlotBooked}>
+                            <div className="flex items-center">
+                              <Clock className="w-4 h-4 mr-2 text-primary" />
+                              {s.label} {isSlotBooked ? "(Booked)" : ""}
+                            </div>
+                          </SelectItem>
+                        )
+                      })}
                     </SelectContent>
                   </Select>
                 </div>
@@ -443,31 +492,58 @@ export default function BookConsultationPage() {
                   <p className="text-xs text-muted-foreground mb-2">
                     {selectedDoctor ? `Available slots for ${selectedDoctorData?.name ?? "selected doctor"}` : "Standard clinic hours"}
                   </p>
-                  {doctorsLoading && !selectedDoctor ? (
+                  {isLeave ? (
+                    <div className="flex items-center gap-2 rounded-lg border border-warning/30 bg-warning/5 p-4 text-sm text-warning-foreground text-amber-700 dark:text-amber-300 font-medium">
+                      <span>⚠️ Dr. {selectedDoctorData?.name ?? "selected doctor"} is on leave on this date. Please pick another date.</span>
+                    </div>
+                  ) : noSlotsConfigured ? (
+                    <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+                      <AlertCircle className="h-4 w-4 shrink-0" />
+                      <span>Doctor has no available consultation hours on this date.</span>
+                    </div>
+                  ) : dateSlotsLoading ? (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading doctor slots...
+                    </div>
+                  ) : doctorsLoading && !selectedDoctor ? (
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading doctor schedule...
                     </div>
                   ) : (
                     <div className="flex flex-wrap gap-2">
-                      {(activeSlotsForSelectedDoctor || FALLBACK_SLOTS).map((s, idx) => {
-                        const active = selectedSlotIndex === String(idx)
-                        return (
-                          <button
-                            type="button"
-                            key={s.label + idx}
-                            onClick={() => setSelectedSlotIndex(String(idx))}
-                            disabled={!selectedDate}
-                            className={`rounded-full border px-3 py-1 text-xs transition-colors ${
-                              active
-                                ? "border-primary bg-primary text-primary-foreground"
-                                : "hover:bg-background disabled:opacity-50"
-                            }`}
-                          >
-                            <Clock className="h-3 w-3 inline mr-1.5 align-[-2px]" />
-                            {s.label}
-                          </button>
-                        )
-                      })}
+                      {activeSlotsForSelectedDoctor && activeSlotsForSelectedDoctor.length > 0 ? (
+                        activeSlotsForSelectedDoctor.map((s, idx) => {
+                          const isSlotBooked = bookedSlotsForDate.includes(s.label)
+                          const isDisabled = !selectedDate || isSlotBooked
+                          const active = selectedSlotIndex === String(idx)
+
+                          let chipClass = "px-3 py-2 rounded-lg text-xs font-medium border transition-all "
+                          if (isDisabled) {
+                            chipClass += "opacity-40 cursor-not-allowed bg-slate-900/50 text-slate-500 border-slate-800 line-through decoration-slate-600"
+                          } else if (active) {
+                            chipClass += "bg-emerald-600 text-white border-emerald-500 ring-2 ring-emerald-400 font-semibold"
+                          } else {
+                            chipClass += "bg-slate-800/80 text-slate-200 border-slate-700 hover:border-emerald-500/50"
+                          }
+
+                          return (
+                            <button
+                              key={s.label + idx}
+                              type="button"
+                              onClick={() => setSelectedSlotIndex(String(idx))}
+                              disabled={isDisabled}
+                              className={chipClass}
+                            >
+                              <Clock className="h-3 w-3 inline mr-1.5 align-[-2px]" />
+                              {s.label}
+                            </button>
+                          )
+                        })
+                      ) : (
+                        <div className="text-amber-400 text-sm py-2">
+                          Doctor has no available consultation hours on this date.
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -521,7 +597,7 @@ export default function BookConsultationPage() {
                 </div>
                 <Button
                   onClick={handleBook}
-                  disabled={!selectedDoctor || !selectedDate || selectedSlotIndex === "" || !reason || booking || !!booked}
+                  disabled={!selectedDoctor || !selectedDate || selectedSlotIndex === "" || !reason || booking || !!booked || noSlotsConfigured || isLeave}
                   className="gap-2"
                 >
                   <Calendar className="w-4 h-4" />
@@ -530,6 +606,8 @@ export default function BookConsultationPage() {
               </div>
             </CardContent>
           </Card>
+          </>
+          )}
         </div>
       </div>
     </div>

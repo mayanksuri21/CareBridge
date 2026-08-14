@@ -114,6 +114,7 @@ export default function EnhancedProfilePage() {
 
           if (profile && !error) {
 
+            const isJsonAbout = profile.about?.trim().startsWith('[') || profile.about?.trim().startsWith('{');
             const loadedData: ProfileData = {
               id: profile.id,
               name: profile.name || session.user.user_metadata?.full_name || "",
@@ -127,7 +128,7 @@ export default function EnhancedProfilePage() {
               company: profile.company || "",
               github: profile.github || "",
               linkedin: profile.linkedin || "",
-              about: profile.about || "I'm passionate about healthcare and helping others.",
+              about: isJsonAbout ? "" : (profile.about || "I'm passionate about healthcare and helping others."),
               avatar_url: profile.avatar_url || "",
             }
             setProfileData(loadedData)

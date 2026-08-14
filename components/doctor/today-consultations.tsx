@@ -100,6 +100,13 @@ export function TodayConsultations({ doctorId, initialConsultations = [] }: Toda
   const [error, setError] = useState<Error | null>(null)
   const [loading, setLoading] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [origin, setOrigin] = useState("")
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setOrigin(window.location.origin)
+    }
+  }, [])
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -134,15 +141,15 @@ export function TodayConsultations({ doctorId, initialConsultations = [] }: Toda
   }, [refresh, supabase, doctorId])
 
   const shareBookingLink = async () => {
-    const bookingUrl = `${window.location.origin}/consultation/book?doctor=${doctorId}`
+    const bookingUrl = `${origin}/consultation/book?doctor=${doctorId}`
     try {
-      if (navigator.share) {
+      if (typeof navigator !== "undefined" && navigator.share) {
         await navigator.share({
           title: "Book a consultation with me",
           text: "Schedule an appointment through CareBridge",
           url: bookingUrl,
         })
-      } else if (navigator.clipboard) {
+      } else if (typeof navigator !== "undefined" && navigator.clipboard) {
         await navigator.clipboard.writeText(bookingUrl)
         setCopied(true)
         setTimeout(() => setCopied(false), 2000)
@@ -191,7 +198,7 @@ export function TodayConsultations({ doctorId, initialConsultations = [] }: Toda
               </Button>
               <Button asChild variant="outline" className="gap-2">
                 <a
-                  href={`${window.location.origin}/consultation/book?doctor=${doctorId}`}
+                  href={`/consultation/book?doctor=${doctorId}`}
                   target="_blank"
                   rel="noreferrer"
                 >

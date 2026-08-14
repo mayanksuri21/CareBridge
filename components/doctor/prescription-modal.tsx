@@ -179,7 +179,7 @@ export function PrescriptionModal({
     // Open synchronously in the click handler so browsers do not block the printable fallback.
     const printableWindow = window.open("", "_blank")
     try {
-      const response = await fetch("/api/prescription/save", {
+      const response = await fetch("/api/prescriptions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

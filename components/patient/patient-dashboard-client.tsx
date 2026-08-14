@@ -3,10 +3,11 @@
 import { FormEvent, useCallback, useEffect, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { Activity, ArrowRight, CalendarDays, FileText, Send, Stethoscope, CheckCircle2, Pill } from "lucide-react"
+import { Activity, ArrowRight, CalendarDays, FileText, Send, Stethoscope, CheckCircle2, Pill, Video } from "lucide-react"
 import { toast } from "sonner"
 
 import { PatientPrescriptionsSection } from "@/components/patient/prescriptions-section"
+import { MyConsultationsPanel } from "@/components/patient/my-consultations-panel"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -17,11 +18,45 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client"
 import { generatePrescriptionPDF, type PrintablePrescription } from "@/lib/generate-prescription-pdf"
 import { Download } from "lucide-react"
 
+function formatAppointmentSlot(appt: any) {
+  if (appt.appointment_date && appt.time_slot) {
+    return `📅 ${appt.appointment_date}  ⏰ ${appt.time_slot}`
+  }
+  if (appt.scheduled_at) {
+    const start = new Date(appt.scheduled_at)
+    if (!Number.isNaN(start.getTime())) {
+      const datePart = start.toLocaleDateString(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })
+      const timePart = start.toLocaleTimeString(undefined, {
+        hour: "numeric",
+        minute: "2-digit",
+      })
+      return `📅 ${datePart}  ⏰ ${timePart}`
+    }
+  }
+  if (appt.reason) {
+    const dateMatch = appt.reason.match(/Selected Date:\s*([\w\d, -]+)/i) || appt.reason.match(/Preferred Date:\s*([\w\d, -]+)/i)
+    const timeMatch = appt.reason.match(/Time Slot:\s*([\w\d: ]+)/i)
+    if (dateMatch && timeMatch) {
+      return `📅 ${dateMatch[1].trim()}  ⏰ ${timeMatch[1].trim()}`
+    }
+    if (dateMatch) {
+      return `📅 ${dateMatch[1].trim()}`
+    }
+  }
+  return "Time not set"
+}
+
 type PatientDashboardClientProps = {
   patientId: string
   patientName: string
   patientEmail: string | null | undefined
   initialPrescriptions?: PrintablePrescription[]
+  initialAppointments?: any[]
 }
 
 export function PatientDashboardClient({
@@ -29,6 +64,7 @@ export function PatientDashboardClient({
   patientName,
   patientEmail,
   initialPrescriptions = [],
+  initialAppointments = [],
 }: PatientDashboardClientProps) {
   const router = useRouter()
   const supabase = createSupabaseBrowserClient()
@@ -39,6 +75,12 @@ export function PatientDashboardClient({
   const [submitted, setSubmitted] = useState(false)
   const [prescriptions, setPrescriptions] = useState<PrintablePrescription[]>(initialPrescriptions)
   const [loadingPrescriptions, setLoadingPrescriptions] = useState(true)
+  const [appointments, setAppointments] = useState<any[]>(initialAppointments)
+  const [loadingAppointments, setLoadingAppointments] = useState(initialAppointments.length === 0)
+
+  const upcomingCount = appointments.filter((appt) =>
+    appt.status === "scheduled" || appt.status === "confirmed" || appt.status === "booked"
+  ).length
 
   const greeting = (() => {
     const hour = new Date().getHours()
@@ -60,17 +102,11 @@ export function PatientDashboardClient({
         setPrescriptions([])
         return
       }
-      const { data, error } = await supabase
-        .from("prescriptions")
-        .select("id, created_at, doctor_name, diagnosis, medicines, advice")
-        .eq("patient_id", patientId)
-        .order("created_at", { ascending: false })
-      if (!error && data) {
-        setPrescriptions(data as unknown as PrintablePrescription[])
-      } else if (error) {
-        console.error("Failed to fetch prescriptions:", error)
-        setPrescriptions(initialPrescriptions)
-      }
+      const res = await fetch(`/api/prescriptions?patient_id=${patientId}`)
+      if (!res.ok) throw new Error("Failed to fetch prescriptions")
+      
+      const payload = await res.json()
+      setPrescriptions(payload.prescriptions || [])
     } catch (err) {
       console.error("Prescription fetch error:", err)
       setPrescriptions(initialPrescriptions)
@@ -79,7 +115,43 @@ export function PatientDashboardClient({
       clearTimeout(safetyTimer)
       setLoadingPrescriptions(false)
     }
-  }, [supabase, patientId, initialPrescriptions])
+  }, [patientId, initialPrescriptions])
+
+  const refreshAppointments = useCallback(async () => {
+    try {
+      setLoadingAppointments(true)
+      const res = await fetch(`/api/patient/appointments?patient_id=${patientId}`)
+      if (!res.ok) throw new Error("Failed to fetch appointments")
+      
+      const payload = await res.json()
+      setAppointments(payload.appointments || [])
+    } catch (err) {
+      console.error(err)
+      setAppointments([])
+    } finally {
+      setLoadingAppointments(false)
+    }
+  }, [patientId])
+
+  useEffect(() => {
+    void refreshAppointments()
+  }, [refreshAppointments])
+
+  useEffect(() => {
+    const channel = supabase
+      .channel(`patient-${patientId}-appointments`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "appointments", filter: `patient_id=eq.${patientId}` },
+        () => {
+          void refreshAppointments()
+        },
+      )
+      .subscribe()
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [supabase, patientId, refreshAppointments])
 
   useEffect(() => {
     if (initialPrescriptions.length > 0) {
@@ -212,7 +284,7 @@ export function PatientDashboardClient({
             </div>
             <div className="rounded-xl border bg-background/60 p-4">
               <p className="text-xs text-muted-foreground">Upcoming Appointments</p>
-              <p className="mt-1 text-2xl font-bold tracking-tight">View below</p>
+              <p className="mt-1 text-2xl font-bold tracking-tight">{upcomingCount} Scheduled</p>
             </div>
             <div className="rounded-xl border bg-background/60 p-4">
               <p className="text-xs text-muted-foreground">Last Visit</p>
@@ -229,6 +301,9 @@ export function PatientDashboardClient({
           <TabsList className="h-auto w-full justify-start gap-2 bg-muted/30 p-2 sm:w-fit">
             <TabsTrigger value="records" className="gap-2">
               <FileText className="size-4" />Medical Records & Prescriptions
+            </TabsTrigger>
+            <TabsTrigger value="appointments" className="gap-2">
+              <CalendarDays className="size-4" />My Consultations
             </TabsTrigger>
             <TabsTrigger value="care" className="gap-2">
               <Activity className="size-4" />Find Care
@@ -297,6 +372,22 @@ export function PatientDashboardClient({
                 ))}
               </div>
             )}
+          </TabsContent>
+
+          <TabsContent value="appointments" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>My Consultation Bookings</CardTitle>
+                <CardDescription>
+                  View and manage your upcoming and completed doctor consultation requests.
+                </CardDescription>
+              </CardHeader>
+            </Card>
+
+            <MyConsultationsPanel
+              appointments={appointments}
+              loading={loadingAppointments}
+            />
           </TabsContent>
 
           <TabsContent value="care" className="grid gap-4 md:grid-cols-2">
