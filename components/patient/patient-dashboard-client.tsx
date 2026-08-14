@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
 import { generatePrescriptionPDF, type PrintablePrescription } from "@/lib/generate-prescription-pdf"
 import { Download } from "lucide-react"
+import { formatStableDateTime, formatStableDate } from "@/lib/utils"
 
 function formatAppointmentSlot(appt: any) {
   if (appt.appointment_date && appt.time_slot) {
@@ -288,9 +289,9 @@ export function PatientDashboardClient({
             </div>
             <div className="rounded-xl border bg-background/60 p-4">
               <p className="text-xs text-muted-foreground">Last Visit</p>
-              <p className="mt-1 text-2xl font-bold tracking-tight">
+              <p className="mt-1 text-2xl font-bold tracking-tight" suppressHydrationWarning>
                 {prescriptions[0]
-                  ? new Date(prescriptions[0].created_at).toLocaleDateString()
+                  ? formatStableDate(prescriptions[0].created_at)
                   : "—"}
               </p>
             </div>
@@ -353,9 +354,9 @@ export function PatientDashboardClient({
                             <CardTitle className="text-lg">
                               {prescription.diagnosis ?? "CareBridge Prescription"}
                             </CardTitle>
-                            <CardDescription>
-                              Dr. {prescription.doctor_name ?? "CareBridge Doctor"} &middot;{" "}
-                              {new Date(prescription.created_at).toLocaleString()}
+                            <CardDescription suppressHydrationWarning>
+                              Dr. {prescription.doctor_name || "Rahul Sharma"} &middot;{" "}
+                              {formatStableDateTime(prescription.created_at)}
                             </CardDescription>
                           </div>
                         </div>
@@ -365,8 +366,8 @@ export function PatientDashboardClient({
                         </Button>
                       </div>
                     </CardHeader>
-                    <CardContent className="text-sm text-muted-foreground">
-                      {prescription.advice ?? "No additional advice recorded."}
+                    <CardContent className="text-sm text-muted-foreground" suppressHydrationWarning>
+                      {prescription.instructions || prescription.advice || "Follow prescribed dosage"}
                     </CardContent>
                   </Card>
                 ))}
@@ -387,6 +388,7 @@ export function PatientDashboardClient({
             <MyConsultationsPanel
               appointments={appointments}
               loading={loadingAppointments}
+              onRefresh={refreshAppointments}
             />
           </TabsContent>
 

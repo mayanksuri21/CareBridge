@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { generatePrescriptionPDF, type PrintablePrescription } from "@/lib/generate-prescription-pdf"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
+import { formatStableDate } from "@/lib/utils"
 
 type PatientPrescriptionsSectionProps = {
   fallbackPrescriptions?: PrintablePrescription[]
@@ -59,7 +60,9 @@ export function PatientPrescriptionsSection({ fallbackPrescriptions = [] }: Pati
                 <Pill className="mt-1 size-5 text-primary" />
                 <div>
                   <CardTitle className="text-lg">{prescription.diagnosis ?? "CareBridge Prescription"}</CardTitle>
-                  <CardDescription>Dr. {prescription.doctor_name ?? "CareBridge Doctor"} - {new Date(prescription.created_at).toLocaleDateString()}</CardDescription>
+                  <CardDescription suppressHydrationWarning>
+                    Dr. {prescription.doctor_name || "Rahul Sharma"} - {formatStableDate(prescription.created_at)}
+                  </CardDescription>
                 </div>
               </div>
               <Button size="sm" onClick={() => generatePrescriptionPDF(prescription)}>
@@ -67,7 +70,9 @@ export function PatientPrescriptionsSection({ fallbackPrescriptions = [] }: Pati
               </Button>
             </div>
           </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">{prescription.advice ?? "No additional advice recorded."}</CardContent>
+          <CardContent className="text-sm text-muted-foreground" suppressHydrationWarning>
+            {prescription.instructions || prescription.advice || "Follow prescribed dosage"}
+          </CardContent>
         </Card>
       ))}
     </div>

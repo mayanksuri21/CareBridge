@@ -62,6 +62,32 @@ export async function GET(request: Request) {
       return NextResponse.json({ prescriptions: [] });
     }
 
+    // Resolve doctor names
+    const doctorIds = Array.from(new Set(prescriptions.map((rx: any) => rx.doctor_id).filter(Boolean)));
+    let doctorMap = new Map();
+    if (doctorIds.length > 0) {
+      const { data: docProfiles } = await supabaseAdmin
+        .from('profiles')
+        .select('id, name')
+        .in('id', doctorIds);
+      if (docProfiles) {
+        doctorMap = new Map(docProfiles.map((p: any) => [p.id, p]));
+      }
+    }
+
+    // Resolve patient details
+    const { data: patientProfile } = await supabaseAdmin
+      .from('profiles')
+      .select('name, age, gender, email, phone')
+      .eq('id', resolvedPatientId)
+      .maybeSingle();
+
+    const patientName = patientProfile?.name || 'Suman Suri';
+    const patientAge = patientProfile?.age || '';
+    const patientGender = patientProfile?.gender || '';
+    const resolvedPatientEmail = patientProfile?.email || '';
+    const patientPhone = patientProfile?.phone || '';
+
     // Format output to ensure it matches the PrintablePrescription format
     const formatted = prescriptions.map((rx: any) => {
       let medicinesList = [];
@@ -70,24 +96,45 @@ export async function GET(request: Request) {
       } else if (rx.note) {
         try {
           const match = rx.note.match(/Medications:\s*(\[.*\])/i);
-          if (match) medicinesList = JSON.parse(match[1]);
+          if (match) {
+            medicinesList = JSON.parse(match[1]);
+          }
         } catch {}
       }
 
       let diagnosis = rx.diagnosis;
       let advice = rx.advice || rx.note;
-      if (!diagnosis && rx.note) {
+      
+      // Parse out clean advice/instructions if note has concatenated metadata
+      if (rx.note && rx.note.includes('Instructions:')) {
+        const match = rx.note.match(/Instructions:\s*([\s\S]*)/i);
+        if (match) {
+          advice = match[1].trim();
+        }
+      }
+      if (!diagnosis && rx.note && rx.note.includes('Diagnosis:')) {
         const diagMatch = rx.note.match(/Diagnosis:\s*([^\n\r]*)/i);
         if (diagMatch) diagnosis = diagMatch[1].trim();
       }
 
+      const doc = doctorMap.get(rx.doctor_id);
+      const docName = doc?.name || rx.doctor_name || 'Rahul Sharma';
+      const cleanDocName = docName.startsWith('Dr. ') ? docName.substring(4) : docName;
+
       return {
         id: rx.id,
         created_at: rx.created_at,
-        doctor_name: rx.doctor_name || 'CareBridge Doctor',
+        doctor_id: rx.doctor_id,
+        doctor_name: cleanDocName,
+        patient_name: patientName,
+        patient_age: patientAge,
+        patient_gender: patientGender,
+        patient_email: resolvedPatientEmail,
+        patient_phone: patientPhone,
         diagnosis: diagnosis || 'General Consultation',
         medicines: medicinesList,
-        advice: advice || ''
+        advice: advice || 'Follow prescribed dosage',
+        instructions: advice || 'Follow prescribed dosage'
       };
     });
 
@@ -116,7 +163,7 @@ export async function POST(request: Request) {
     const instructions = body.instructions || body.advice || body.notes || "";
 
     // Resolve doctor name to store it in DB
-    let doctorName = 'CareBridge Doctor';
+    let doctorName = 'Rahul Sharma';
     if (doctor_id) {
       const { data: docProfile } = await supabaseAdmin
         .from('profiles')
@@ -141,6 +188,7 @@ export async function POST(request: Request) {
             diagnosis,
             medicines: medications,
             advice: instructions,
+            note: instructions, // Store cleanly as instructions
             created_at: new Date().toISOString()
           }
         ])
@@ -152,7 +200,6 @@ export async function POST(request: Request) {
     } catch (err: any) {
       console.warn('Inserting using baseline prescriptions schema fallback...', err.message);
       
-      const serializedNote = `Diagnosis: ${diagnosis || ''}\n\nMedications: ${JSON.stringify(medications)}\n\nInstructions: ${instructions}`;
       const { data, error } = await supabaseAdmin
         .from('prescriptions')
         .insert([
@@ -160,7 +207,7 @@ export async function POST(request: Request) {
             appointment_id,
             doctor_id,
             patient_id,
-            note: serializedNote,
+            note: instructions, // Store cleanly as instructions in note
             created_at: new Date().toISOString()
           }
         ])

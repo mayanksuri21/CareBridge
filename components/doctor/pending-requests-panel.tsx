@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/card"
 import { PrescriptionModal } from "@/components/doctor/prescription-modal"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
+import { formatStableDate } from "@/lib/utils"
 
 type PendingRequest = {
   id: string
@@ -65,12 +66,7 @@ function formatSlot(request: PendingRequest) {
   if (request.scheduled_at) {
     const start = new Date(request.scheduled_at)
     if (!Number.isNaN(start.getTime())) {
-      const datePart = start.toLocaleDateString(undefined, {
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      })
+      const datePart = formatStableDate(start)
       const timePart = start.toLocaleTimeString(undefined, {
         hour: "numeric",
         minute: "2-digit",
@@ -80,12 +76,7 @@ function formatSlot(request: PendingRequest) {
   }
   if (request.schedule_slots) {
     const start = new Date(request.schedule_slots.start_time)
-    const datePart = start.toLocaleDateString(undefined, {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    })
+    const datePart = formatStableDate(start)
     const timePart = start.toLocaleTimeString(undefined, {
       hour: "numeric",
       minute: "2-digit",
@@ -280,18 +271,22 @@ export function PendingRequestsPanel({ doctorId, onMetricsChange }: PendingReque
   const rejectRequest = async (requestId: string) => {
     setWorkingId(requestId)
     try {
-      const { error } = await supabase
-        .from("appointments")
-        .update({ status: "cancelled" })
-        .eq("id", requestId)
-        .eq("doctor_id", doctorId)
-      if (error) throw error
-      toast.success("Request cancelled — patient will be notified to reschedule.")
-      void refresh()
+      const response = await fetch('/api/doctor/appointments/decline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ appointment_id: requestId }),
+      })
+      if (!response.ok) {
+        const payload = await response.json()
+        throw new Error(payload.error || "Failed to decline appointment")
+      }
+      
+      setRequests((prev: any[]) => prev.filter((a) => a.id !== requestId))
+      toast.success("Appointment declined")
       notifyMetrics()
-    } catch (err) {
+    } catch (err: any) {
       console.error(err)
-      toast.error("Could not cancel this request. Please try again.")
+      toast.error(err.message || "Could not decline this request. Please try again.")
     } finally {
       setWorkingId(null)
     }

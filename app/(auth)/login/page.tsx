@@ -42,6 +42,8 @@ function AuthPageContent() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
+  const [age, setAge] = useState("")
+  const [gender, setGender] = useState("")
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState<{ type: "success" | "error"; message: string } | null>(null)
@@ -64,6 +66,16 @@ function AuthPageContent() {
       return
     }
 
+    if (!age || isNaN(Number(age)) || Number(age) < 1 || Number(age) > 120) {
+      setStatus({ type: "error", message: "Please enter a valid age (1-120)" })
+      return
+    }
+
+    if (!gender) {
+      setStatus({ type: "error", message: "Please select a gender" })
+      return
+    }
+
     try {
       setLoading(true)
       setStatus(null)
@@ -76,7 +88,9 @@ function AuthPageContent() {
             name,
             phone,
             role,
-            language: "en"
+            language: "en",
+            age: Number(age),
+            gender
           }
         }
       })
@@ -88,7 +102,14 @@ function AuthPageContent() {
         await fetch("/api/profile", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, phone, role, language: "en" })
+          body: JSON.stringify({
+            name,
+            phone,
+            role,
+            language: "en",
+            age: Number(age),
+            gender
+          })
         })
         setStatus({ type: "success", message: "Account created successfully!" })
 
@@ -258,6 +279,36 @@ function AuthPageContent() {
                       </div>
                     </div>
 
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="age">Age</Label>
+                        <Input
+                          id="age"
+                          type="number"
+                          min="1"
+                          max="120"
+                          placeholder="Age"
+                          value={age}
+                          onChange={(e) => setAge(e.target.value)}
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="gender">Gender</Label>
+                        <Select value={gender} onValueChange={(val) => setGender(val)}>
+                          <SelectTrigger id="gender">
+                            <SelectValue placeholder="Gender" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Male">Male</SelectItem>
+                            <SelectItem value="Female">Female</SelectItem>
+                            <SelectItem value="Other">Other</SelectItem>
+                            <SelectItem value="Prefer not to say">Prefer not to say</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
                     <div className="space-y-2">
                       <Label htmlFor="email">Email</Label>
                       <div className="relative">
@@ -315,7 +366,7 @@ function AuthPageContent() {
                     <Button 
                       className="w-full h-12" 
                       onClick={handleSignUp}
-                      disabled={loading || !name || !phone || !email || !password || !confirmPassword}
+                      disabled={loading || !name || !phone || !email || !password || !confirmPassword || !age || !gender}
                     >
                       {loading ? "Creating Account..." : "Create Account"}
                     </Button>

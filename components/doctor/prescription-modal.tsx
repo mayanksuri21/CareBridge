@@ -70,11 +70,48 @@ export function PrescriptionModal({
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
 
+  const [patientDetails, setPatientDetails] = useState<{ age: string | number; gender: string } | null>(null);
+  const [resolvedDoctorName, setResolvedDoctorName] = useState<string>("");
+
   useEffect(() => {
     if (open) {
       setChiefComplaint(initialChiefComplaint ?? "")
+      
+      const fetchDetails = async () => {
+        try {
+          const { createSupabaseBrowserClient } = await import("@/lib/supabase/client");
+          const supabase = createSupabaseBrowserClient();
+          
+          const targetPatientId = patientId || directPatientId;
+          if (targetPatientId) {
+            const { data } = await supabase
+              .from("profiles")
+              .select("age, gender")
+              .eq("id", targetPatientId)
+              .maybeSingle();
+            if (data) {
+              setPatientDetails({ age: data.age ?? "", gender: data.gender ?? "" });
+            }
+          }
+          
+          if (doctorId) {
+            const { data } = await supabase
+              .from("profiles")
+              .select("name")
+              .eq("id", doctorId)
+              .maybeSingle();
+            if (data?.name) {
+              setResolvedDoctorName(data.name);
+            }
+          }
+        } catch (e) {
+          console.error("Error fetching dynamic details:", e);
+        }
+      };
+      
+      void fetchDetails();
     }
-  }, [open, initialChiefComplaint])
+  }, [open, initialChiefComplaint, patientId, directPatientId, doctorId]);
 
   function updateMedicine(index: number, field: keyof Medicine, value: string) {
     setMedicines((currentMedicines) =>
@@ -105,6 +142,13 @@ export function PrescriptionModal({
       .filter((medicine) => medicine.medicineName.trim())
       .map((medicine) => `<tr><td>${escapeHtml(medicine.medicineName)}</td><td>${escapeHtml(medicine.dosage || "-")}</td><td>${escapeHtml(medicine.frequency || "-")}</td><td>${escapeHtml(medicine.duration || "-")}</td></tr>`)
       .join("")
+      
+    const docName = resolvedDoctorName || "Rahul Sharma"
+    const doctorLabel = docName.startsWith("Dr. ") ? docName : `Dr. ${docName}`
+    const ageLabel = patientDetails?.age ? `${patientDetails.age} yrs` : "N/A"
+    const genderLabel = patientDetails?.gender || "N/A"
+    const patientAgeSex = `${ageLabel} / ${genderLabel}`
+
     prescriptionWindow.document.write(`<!doctype html>
 <html><head><title>${prescriptionReference} | CareBridge</title><style>
   @page { size: A4; margin: 12mm; }
@@ -136,10 +180,10 @@ export function PrescriptionModal({
   .disclaimer { border-top: 1px solid #e2e8f0; padding-top: 14px; color: #64748b; font-size: 10px; text-align: center; }
   @media print { body { background: #fff; } .sheet { min-height: auto; border: 0; border-radius: 0; } }
 </style></head><body>
-<main class="sheet"><header class="header"><div><div class="brand">CareBridge Telehealth Platform</div><div class="tagline">Official Digital Health Record</div></div><div class="doctor"><strong>Dr. Sarah Jenkins, M.D.</strong><p>Senior Consultant - General Medicine</p><p>Reg No: MCI / NMC Reg. #892341</p></div></header>
-<section class="content"><div class="metadata"><div><span class="label">Patient Name</span><span class="value">${escapeHtml(patientLabel)}</span></div><div><span class="label">Age / Sex</span><span class="value">28 / Male</span></div><div><span class="label">Date</span><span class="value">${issuedDate}</span></div><div><span class="label">Prescription ID</span><span class="value">${prescriptionReference}</span></div></div>
+<main class="sheet"><header class="header"><div><div class="brand">CareBridge Telehealth Platform</div><div class="tagline">Official Digital Health Record</div></div><div class="doctor"><strong>${escapeHtml(doctorLabel)}</strong><p>Senior Telehealth Consultant</p><p>Reg No: MCI / NMC Reg. #892341</p></div></header>
+<section class="content"><div class="metadata"><div><span class="label">Patient Name</span><span class="value">${escapeHtml(patientLabel)}</span></div><div><span class="label">Age / Sex</span><span class="value">${escapeHtml(patientAgeSex)}</span></div><div><span class="label">Date</span><span class="value">${issuedDate}</span></div><div><span class="label">Prescription ID</span><span class="value">${prescriptionReference}</span></div></div>
 <div class="rx">Rx</div><p><span class="label">Chief Diagnosis</span><span class="value">${escapeHtml(chiefComplaint || "Not recorded")}</span></p><table><thead><tr><th>Medicine Name</th><th>Dosage</th><th>Frequency</th><th>Duration</th></tr></thead><tbody>${medicineRows}</tbody></table>
-<section class="notes"><h2>Doctor Notes / Advice</h2><p>${escapeHtml(advice || "No additional advice recorded.")}</p></section><div class="signature"><strong>Dr. Sarah Jenkins</strong><span>Digitally Signed &amp; Validated via CareBridge Security Protocol</span></div><footer class="disclaimer">This is a electronically generated prescription under Telemedicine Practice Guidelines. No physical signature required.</footer></section></main>
+<section class="notes"><h2>Doctor Notes / Advice</h2><p>${escapeHtml(advice || "No additional advice recorded.")}</p></section><div class="signature"><strong>${escapeHtml(doctorLabel)}</strong><span>Digitally Signed &amp; Validated via CareBridge Security Protocol</span></div><footer class="disclaimer">This is a electronically generated prescription under Telemedicine Practice Guidelines. No physical signature required.</footer></section></main>
 </body></html>`)
     prescriptionWindow.document.close()
     prescriptionWindow.focus()

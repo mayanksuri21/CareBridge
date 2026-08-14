@@ -20,6 +20,8 @@ export async function POST(req: Request) {
     specialty,
     about,
     avatar_url,
+    age,
+    gender,
   } = body || {};
 
   let userRole = "patient";
@@ -50,6 +52,8 @@ export async function POST(req: Request) {
     specialty: specialty ?? null,
     about: about ?? null,
     avatar_url: avatar_url ?? null,
+    age: age !== undefined ? (age ? Number(age) : null) : (user.user_metadata?.age ? Number(user.user_metadata.age) : null),
+    gender: gender ?? user.user_metadata?.gender ?? null,
   });
 
   if (upsertErr) {

@@ -6,6 +6,8 @@ import { CalendarDays, Video } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { formatStableDate } from "@/lib/utils"
+import { toast } from "sonner"
 
 type Appointment = {
   id: string
@@ -28,9 +30,35 @@ type Appointment = {
 type MyConsultationsPanelProps = {
   appointments: Appointment[]
   loading: boolean
+  onRefresh?: () => void
 }
 
-export function MyConsultationsPanel({ appointments, loading }: MyConsultationsPanelProps) {
+export function MyConsultationsPanel({ appointments: initialAppointments, loading, onRefresh }: MyConsultationsPanelProps) {
+  const [appointments, setAppointments] = React.useState<Appointment[]>([])
+
+  React.useEffect(() => {
+    setAppointments(initialAppointments || [])
+  }, [initialAppointments])
+
+  const [dismissingId, setDismissingId] = React.useState<string | null>(null)
+
+  const handleDismiss = async (aptId: string) => {
+    setDismissingId(aptId)
+    try {
+      const res = await fetch(`/api/patient/appointments?id=${aptId}`, {
+        method: "DELETE"
+      })
+      if (!res.ok) throw new Error("Failed to delete appointment")
+      toast.success("Appointment dismissed successfully")
+      onRefresh?.()
+    } catch (err) {
+      console.error(err)
+      toast.error("Failed to dismiss appointment")
+    } finally {
+      setDismissingId(null)
+    }
+  }
+
   if (loading) {
     return (
       <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">
@@ -63,7 +91,7 @@ export function MyConsultationsPanel({ appointments, loading }: MyConsultationsP
         const specialty = doctor.specialty || "General Medicine"
 
         // Format appointment slot: 📅 ${apt.appointment_date || apt.scheduled_at} | ⏰ ${apt.time_slot || "Slot"}
-        const datePart = apt.appointment_date || (apt.scheduled_at ? new Date(apt.scheduled_at).toLocaleDateString() : "") || "Date not set"
+        const datePart = apt.appointment_date || (apt.scheduled_at ? formatStableDate(apt.scheduled_at) : "") || "Date not set"
         const timePart = apt.time_slot || (apt.scheduled_at ? new Date(apt.scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "") || "Slot"
 
         const isScheduled = apt.status === "scheduled" || apt.status === "confirmed" || apt.status === "booked"
@@ -88,20 +116,28 @@ export function MyConsultationsPanel({ appointments, loading }: MyConsultationsP
                         ⏳ Pending Doctor Review
                       </Badge>
                     )}
-                    {!isScheduled && !isPending && apt.status && (
-                      <Badge variant="outline" className="border-destructive/40 bg-destructive/10 text-destructive gap-1 capitalize font-medium">
-                        {apt.status}
-                      </Badge>
-                    )}
+                     {(apt.status === "declined" || apt.status === "cancelled") && (
+                       <span className="px-2 py-1 text-xs font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-full">✕ Declined by Doctor</span>
+                     )}
+                     {!isScheduled && !isPending && apt.status !== "declined" && apt.status !== "cancelled" && apt.status && (
+                       <Badge variant="outline" className="border-destructive/40 bg-destructive/10 text-destructive gap-1 capitalize font-medium">
+                         {apt.status}
+                       </Badge>
+                     )}
                   </div>
-                  <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                  <div className="flex flex-wrap gap-4 text-xs text-muted-foreground" suppressHydrationWarning>
                     <span>📅 {datePart} | ⏰ {timePart}</span>
-                    <span>Created on {new Date(apt.created_at).toLocaleDateString()}</span>
+                    <span>Created on {formatStableDate(apt.created_at)}</span>
                   </div>
                   <p className="text-sm text-foreground/80 pt-1">
                     <span className="font-semibold text-foreground">Reason/Symptoms:</span>{" "}
                     {apt.reason || apt.symptoms || "Consultation Request"}
                   </p>
+                  {(apt.status === "declined" || apt.status === "cancelled") && (
+                    <p className="text-xs text-rose-600 dark:text-rose-400 font-medium mt-1">
+                      The doctor was unavailable for this slot. Please choose another time.
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 self-start sm:self-center">
                   {isScheduled && (
@@ -111,6 +147,18 @@ export function MyConsultationsPanel({ appointments, loading }: MyConsultationsP
                       </Link>
                     </Button>
                   )}
+                   {(apt.status === 'declined' || apt.status === 'cancelled') && (
+                     <button
+                       onClick={async () => {
+                         await fetch(`/api/patient/appointments?id=${apt.id}`, { method: 'DELETE' });
+                         setAppointments((prev: any[]) => prev.filter((a) => a.id !== apt.id));
+                         onRefresh?.();
+                       }}
+                       className="px-3 py-1.5 rounded-lg text-xs font-medium bg-rose-600/20 text-rose-300 hover:bg-rose-600 hover:text-white border border-rose-500/40 transition-colors"
+                     >
+                       🗑️ Remove
+                     </button>
+                   )}
                   <Button asChild size="sm" variant="outline">
                     <Link href={`/consultation/book?doctor=${apt.doctor_id || ""}`}>
                       Book Again

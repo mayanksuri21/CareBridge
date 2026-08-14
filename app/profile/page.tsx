@@ -53,6 +53,11 @@ interface ProfileData {
   first_login_at: string
   created_at: string
   updated_at: string
+  age?: number | string | null
+  gender?: string | null
+  blood_group?: string | null
+  emergency_contact?: string | null
+  allergies?: string | null
 }
 
 export default function ProfilePage() {
@@ -122,7 +127,6 @@ export default function ProfilePage() {
         if (profileError && profileError.code !== 'PGRST116') {
           console.error("Profile error:", profileError)
         }
-
         if (!profile) {
           console.log("Profile page: No profile found, showing onboarding")
           setShowOnboarding(true)
@@ -138,7 +142,12 @@ export default function ProfilePage() {
             about: "",
             avatar_url: "",
             specialty: "",
-            language: "en"
+            language: "en",
+            age: "",
+            gender: "",
+            blood_group: "",
+            emergency_contact: "",
+            allergies: ""
           })
         } else {
           console.log("Profile page: Profile found, loading data:", profile.name)
@@ -148,6 +157,11 @@ export default function ProfilePage() {
             name: profile.name || session.user.user_metadata?.full_name || "",
             email: profile.email || session.user.email || "",
             about: isJsonAbout ? "" : (profile.about || ""),
+            age: profile.age ?? "",
+            gender: profile.gender ?? "",
+            blood_group: profile.blood_group ?? "",
+            emergency_contact: profile.emergency_contact ?? "",
+            allergies: profile.allergies ?? ""
           })
           
           if (!profile.onboarding_completed) {
@@ -584,6 +598,72 @@ export default function ProfilePage() {
                       />
                     </div>
 
+                    <div className="space-y-2">
+                      <Label htmlFor="age">Age</Label>
+                      <Input
+                        id="age"
+                        type="number"
+                        min="1"
+                        max="120"
+                        value={profileData.age || ""}
+                        onChange={(e) => handleInputChange("age", e.target.value)}
+                        placeholder="Age (1-120)"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="gender">Gender</Label>
+                      <Select 
+                        value={profileData.gender || ""} 
+                        onValueChange={(value) => handleInputChange("gender", value)}
+                      >
+                        <SelectTrigger id="gender">
+                          <SelectValue placeholder="Select Gender" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Male">Male</SelectItem>
+                          <SelectItem value="Female">Female</SelectItem>
+                          <SelectItem value="Other">Other</SelectItem>
+                          <SelectItem value="Prefer not to say">Prefer not to say</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {profileData.role === "patient" && (
+                      <>
+                        <div className="space-y-2">
+                          <Label htmlFor="blood_group">Blood Group</Label>
+                          <Input
+                            id="blood_group"
+                            value={profileData.blood_group || ""}
+                            onChange={(e) => handleInputChange("blood_group", e.target.value)}
+                            placeholder="e.g. O+, A-"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="emergency_contact">Emergency Contact</Label>
+                          <Input
+                            id="emergency_contact"
+                            value={profileData.emergency_contact || ""}
+                            onChange={(e) => handleInputChange("emergency_contact", e.target.value)}
+                            placeholder="Contact Name & Number"
+                          />
+                        </div>
+
+                        <div className="space-y-2 md:col-span-2">
+                          <Label htmlFor="allergies">Medical Allergies / Conditions</Label>
+                          <Textarea
+                            id="allergies"
+                            value={profileData.allergies || ""}
+                            onChange={(e) => handleInputChange("allergies", e.target.value)}
+                            placeholder="List any known allergies, chronic diseases, or medical conditions..."
+                            rows={3}
+                          />
+                        </div>
+                      </>
+                    )}
+
                     <div className="space-y-2 md:col-span-2">
                       <Label htmlFor="address">Address</Label>
                       <Input
@@ -694,6 +774,45 @@ export default function ProfilePage() {
                           <MapPin className="h-5 w-5 text-muted-foreground" />
                           <span>{profileData.address}</span>
                         </div>
+                      )}
+
+                      {(profileData.age !== undefined && profileData.age !== null && profileData.age !== "") && (
+                        <div className="flex items-center gap-3">
+                          <User className="h-5 w-5 text-muted-foreground" />
+                          <span>Age: {profileData.age} years</span>
+                        </div>
+                      )}
+
+                      {profileData.gender && (
+                        <div className="flex items-center gap-3">
+                          <User className="h-5 w-5 text-muted-foreground" />
+                          <span>Gender: {profileData.gender}</span>
+                        </div>
+                      )}
+
+                      {profileData.role === "patient" && (
+                        <>
+                          {profileData.blood_group && (
+                            <div className="flex items-center gap-3">
+                              <span className="font-semibold text-xs text-muted-foreground uppercase tracking-wider">Blood Group:</span>
+                              <Badge variant="outline">{profileData.blood_group}</Badge>
+                            </div>
+                          )}
+                          {profileData.emergency_contact && (
+                            <div className="flex items-center gap-3">
+                              <span className="font-semibold text-xs text-muted-foreground uppercase tracking-wider">Emergency Contact:</span>
+                              <span>{profileData.emergency_contact}</span>
+                            </div>
+                          )}
+                          {profileData.allergies && (
+                            <div className="flex flex-col gap-1 pt-1">
+                              <span className="font-semibold text-xs text-muted-foreground uppercase tracking-wider">Medical Allergies:</span>
+                              <span className="text-sm text-red-600 dark:text-red-400 font-medium bg-red-50 dark:bg-red-950/20 px-2 py-1 rounded-md border border-red-100 dark:border-red-900/30">
+                                {profileData.allergies}
+                              </span>
+                            </div>
+                          )}
+                        </>
                       )}
                       
                       {profileData.company && (

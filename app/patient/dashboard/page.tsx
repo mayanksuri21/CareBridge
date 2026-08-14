@@ -58,6 +58,18 @@ export default async function PatientDashboardPage() {
 
   let prescriptions: PrintablePrescription[] = []
   if (!rxError && prescriptionsRaw && prescriptionsRaw.length > 0) {
+    const doctorIds = Array.from(new Set(prescriptionsRaw.map((rx: any) => rx.doctor_id).filter(Boolean)))
+    let doctorMap = new Map()
+    if (doctorIds.length > 0) {
+      const { data: docProfiles } = await supabaseAdmin
+        .from("profiles")
+        .select("id, name")
+        .in("id", doctorIds)
+      if (docProfiles) {
+        doctorMap = new Map(docProfiles.map((p: any) => [p.id, p]))
+      }
+    }
+
     prescriptions = prescriptionsRaw.map((rx: any) => {
       let medicinesList = []
       if (rx.medicines) {
@@ -71,18 +83,29 @@ export default async function PatientDashboardPage() {
 
       let diagnosis = rx.diagnosis
       let advice = rx.advice || rx.note
-      if (!diagnosis && rx.note) {
+      
+      if (rx.note && rx.note.includes('Instructions:')) {
+        const match = rx.note.match(/Instructions:\s*([\s\S]*)/i)
+        if (match) advice = match[1].trim()
+      }
+      if (!diagnosis && rx.note && rx.note.includes('Diagnosis:')) {
         const diagMatch = rx.note.match(/Diagnosis:\s*([^\n\r]*)/i)
         if (diagMatch) diagnosis = diagMatch[1].trim()
       }
 
+      const doc = doctorMap.get(rx.doctor_id)
+      const docName = doc?.name || rx.doctor_name || 'Rahul Sharma'
+      const cleanDocName = docName.startsWith('Dr. ') ? docName.substring(4) : docName
+
       return {
         id: rx.id,
         created_at: rx.created_at,
-        doctor_name: rx.doctor_name || 'CareBridge Doctor',
+        doctor_id: rx.doctor_id,
+        doctor_name: cleanDocName,
         diagnosis: diagnosis || 'General Consultation',
         medicines: medicinesList,
-        advice: advice || ''
+        advice: advice || 'Follow prescribed dosage',
+        instructions: advice || 'Follow prescribed dosage'
       }
     })
   }
@@ -91,7 +114,7 @@ export default async function PatientDashboardPage() {
     .from("appointments")
     .select("id, doctor_id, slot_id, status, reason, created_at")
     .eq("patient_id", user.id)
-    .in("status", ["scheduled", "pending", "booked", "confirmed"])
+    .in("status", ["scheduled", "pending", "booked", "confirmed", "declined", "cancelled"])
     .order("created_at", { ascending: false })
 
   let initialApptsMapped: any[] = []
