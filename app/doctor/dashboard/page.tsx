@@ -1,14 +1,14 @@
 import Link from "next/link"
-import { CalendarCheck, ClipboardList, FileText, Stethoscope, Users } from "lucide-react"
+import { CalendarCheck, Stethoscope } from "lucide-react"
 
 import { DoctorSlotManager, type SavedSlot } from "@/components/doctor/doctor-slot-manager"
 import { PendingRequestsPanel } from "@/components/doctor/pending-requests-panel"
 import { PrescriptionModal } from "@/components/doctor/prescription-modal"
+import { LiveMetrics } from "@/components/doctor/live-metrics"
 import { requireDoctorVerification } from "@/lib/supabase/doctor-verification"
 import { TodayConsultations } from "@/components/doctor/today-consultations"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 
 export const dynamic = "force-dynamic"
@@ -21,13 +21,6 @@ type DoctorProfile = {
   phone: string | null
   language: string | null
   available_slots: SavedSlot[] | null
-}
-
-type DashboardMetrics = {
-  totalAppointments: number
-  totalPrescriptions: number
-  todayAppointments: number
-  todayCompleted: number
 }
 
 export default async function DoctorDashboard() {
@@ -97,13 +90,6 @@ export default async function DoctorDashboard() {
     language: null,
     available_slots: savedSlots,
   }) as DoctorProfile
-
-  const metrics: DashboardMetrics = {
-    totalAppointments: totalAppointments ?? 0,
-    totalPrescriptions: totalPrescriptions ?? 0,
-    todayAppointments: todayAppointments ?? 0,
-    todayCompleted: todayCompleted ?? 0,
-  }
 
   const greeting = (() => {
     const hour = today.getHours()
@@ -182,67 +168,13 @@ export default async function DoctorDashboard() {
         </div>
       </section>
 
-      <section className="container mx-auto grid gap-4 px-4 pb-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card className="transition-all duration-300 hover:shadow-md hover:-translate-y-0.5">
-          <CardContent className="p-6">
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Total Appointments</p>
-                <p className="mt-2 text-3xl font-bold tracking-tight">{metrics.totalAppointments}</p>
-                <p className="mt-1 text-xs text-muted-foreground">All-time consultation count</p>
-              </div>
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10">
-                <Users className="h-5 w-5 text-primary" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="transition-all duration-300 hover:shadow-md hover:-translate-y-0.5">
-          <CardContent className="p-6">
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Prescriptions Issued</p>
-                <p className="mt-2 text-3xl font-bold tracking-tight">{metrics.totalPrescriptions}</p>
-                <p className="mt-1 text-xs text-muted-foreground">Lifetime digital prescriptions</p>
-              </div>
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-secondary/10">
-                <FileText className="h-5 w-5 text-secondary" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="transition-all duration-300 hover:shadow-md hover:-translate-y-0.5">
-          <CardContent className="p-6">
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Today&apos;s Schedule</p>
-                <p className="mt-2 text-3xl font-bold tracking-tight">{metrics.todayAppointments}</p>
-                <p className="mt-1 text-xs text-muted-foreground">Appointments booked today</p>
-              </div>
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-accent/10">
-                <CalendarCheck className="h-5 w-5 text-accent" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="transition-all duration-300 hover:shadow-md hover:-translate-y-0.5">
-          <CardContent className="p-6">
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Completed Today</p>
-                <p className="mt-2 text-3xl font-bold tracking-tight">{metrics.todayCompleted}</p>
-                <p className="mt-1 text-xs text-muted-foreground">Consultations marked done</p>
-              </div>
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-500/10">
-                <ClipboardList className="h-5 w-5 text-emerald-600" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </section>
+      <LiveMetrics
+        doctorId={doctorId}
+        initialTotalAppointments={totalAppointments ?? 0}
+        initialTotalPrescriptions={totalPrescriptions ?? 0}
+        initialTodayAppointments={todayAppointments ?? 0}
+        initialTodayCompleted={todayCompleted ?? 0}
+      />
 
       <section className="container mx-auto grid gap-4 px-4 pb-4 lg:grid-cols-[1.2fr_1fr]">
         <PendingRequestsPanel doctorId={doctorId} />

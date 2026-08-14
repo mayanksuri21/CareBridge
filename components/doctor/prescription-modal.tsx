@@ -1,6 +1,6 @@
 "use client"
 
-import { FormEvent, useEffect, useId, useState } from "react"
+import { FormEvent, ReactNode, useEffect, useId, useState } from "react"
 import { Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -16,6 +16,9 @@ import {
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 
+type TriggerVariant = "default" | "destructive" | "outline" | "secondary" | "ghost" | "link"
+type TriggerSize = "default" | "sm" | "lg" | "icon"
+
 type Medicine = {
   medicineName: string
   dosage: string
@@ -30,6 +33,9 @@ type PrescriptionModalProps = {
   patientName?: string | null
   initialChiefComplaint?: string | null
   triggerLabel?: string
+  triggerVariant?: TriggerVariant
+  triggerSize?: TriggerSize
+  triggerIcon?: ReactNode
   onSaved?: () => void
 }
 
@@ -49,6 +55,9 @@ export function PrescriptionModal({
   patientName,
   initialChiefComplaint,
   triggerLabel = "Create Prescription",
+  triggerVariant = "default",
+  triggerSize = "sm",
+  triggerIcon,
   onSaved,
 }: PrescriptionModalProps) {
   const patientFieldId = useId()
@@ -202,7 +211,8 @@ export function PrescriptionModal({
 
   return (
     <>
-      <Button size="sm" onClick={() => setOpen(true)}>
+      <Button size={triggerSize} variant={triggerVariant} onClick={() => setOpen(true)} className="gap-1.5">
+        {triggerIcon}
         {triggerLabel}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>

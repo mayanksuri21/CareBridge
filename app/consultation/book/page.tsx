@@ -14,11 +14,14 @@ import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
 
+type VerificationStatus = "pending" | "approved" | "rejected" | null
+
 type DoctorRow = {
   id: string
   name: string | null
   specialty: string | null
-  languages: string[] | null
+  language: string | null
+  verification_status: VerificationStatus
   available_slots: Array<{
     label: string
     hour: number
@@ -40,7 +43,6 @@ const FALLBACK_SLOTS: Array<{
   { label: "04:00 PM", hour: 16, minute: 0, durationMin: 45 },
   { label: "05:30 PM", hour: 17, minute: 30, durationMin: 45 },
   { label: "07:00 PM", hour: 19, minute: 0, durationMin: 45 },
-  { label: "08:30 PM", hour: 20, minute: 30, durationMin: 45 },
 ]
 
 function buildSlotDate(date: string | null, slot: { hour: number; minute: number; durationMin: number } | null): {
@@ -79,7 +81,7 @@ export default function BookConsultationPage() {
 
   const selectedDoctorData = doctors.find((d) => d.id === selectedDoctor) ?? null
   const activeSlotsForSelectedDoctor = useMemo(() => {
-    if (!selectedDoctorData) return []
+    if (!selectedDoctorData) return FALLBACK_SLOTS
     if (Array.isArray(selectedDoctorData.available_slots) && selectedDoctorData.available_slots.length > 0) {
       return selectedDoctorData.available_slots
     }
@@ -91,66 +93,55 @@ export default function BookConsultationPage() {
     setDoctorsLoading(true)
     ;(async () => {
       try {
-        const [{ data: profileDoctors }, { data: drRaw }] = await Promise.all([
-          supabase
-            .from("profiles")
-            .select("id, name, specialty, languages, available_slots")
-            .eq("role", "doctor")
-            .order("name", { nullsFirst: false }),
-          supabase.from("doctors").select("id, specialty, languages, available_slots, profiles(name)"),
-        ])
+        const { data: profileDoctors, error: profilesErr } = await supabase
+          .from("profiles")
+          .select("id, name, specialty, language, available_slots, role")
+          .eq("role", "doctor")
+          .order("name", { nullsFirst: false })
+
+        if (profilesErr) {
+          console.error("Failed to load doctor profiles:", profilesErr)
+        }
+
+        const { data: verifications, error: verErr } = await supabase
+          .from("doctor_verification_applications")
+          .select("doctor_id, status")
+
+        if (verErr) {
+          console.error("Failed to load verification statuses:", verErr)
+        }
 
         if (cancelled) return
-        const profileMap = new Map<string, DoctorRow>()
-        for (const row of (profileDoctors ?? []) as Array<{
-          id: string
-          name: string | null
-          specialty: string | null
-          languages: string | string[] | null
-          available_slots: DoctorRow["available_slots"] | null
-        }>) {
-          const languages = Array.isArray(row.languages)
-            ? row.languages
-            : row.languages
-              ? (JSON.parse(String(row.languages)) as string[])
-              : null
-          profileMap.set(row.id, {
+
+        const verificationMap = new Map<string, VerificationStatus>()
+        for (const v of verifications ?? []) {
+          verificationMap.set(v.doctor_id, (v.status as VerificationStatus) ?? null)
+        }
+
+        const combined: DoctorRow[] = (profileDoctors ?? []).map((row: any) => {
+          const status = verificationMap.get(row.id) ?? null
+          const slots = Array.isArray(row.available_slots) ? row.available_slots : null
+          return {
             id: row.id,
             name: row.name ?? null,
             specialty: row.specialty ?? null,
-            languages,
-            available_slots: Array.isArray(row.available_slots) ? row.available_slots : null,
-          })
-        }
+            language: row.language ?? null,
+            verification_status: status,
+            available_slots: slots,
+          }
+        })
 
-        for (const raw of (drRaw ?? []) as unknown as Array<{
-          id: string
-          specialty: string | null
-          languages: string | string[] | null
-          available_slots: DoctorRow["available_slots"] | null
-          profiles: { name: string | null } | { name: string | null }[] | null
-        }>) {
-          const profileArr = Array.isArray(raw.profiles) ? raw.profiles : null
-          const profileObj = !Array.isArray(raw.profiles) ? raw.profiles : null
-          const profileName = profileArr?.[0]?.name ?? profileObj?.name ?? null
-          const existing = profileMap.get(raw.id)
-          const languages = Array.isArray(raw.languages)
-            ? raw.languages
-            : raw.languages
-              ? (JSON.parse(String(raw.languages)) as string[])
-              : null
-          profileMap.set(raw.id, {
-            id: raw.id,
-            name: profileName ?? existing?.name ?? null,
-            specialty: raw.specialty ?? existing?.specialty ?? null,
-            languages: languages ?? existing?.languages,
-            available_slots: Array.isArray(raw.available_slots)
-              ? raw.available_slots
-              : existing?.available_slots ?? null,
-          })
-        }
+        combined.sort((a, b) => {
+          const rank = (s: VerificationStatus) =>
+            s === "approved" ? 0 : s === "pending" ? 1 : s === "rejected" ? 2 : 3
+          const byStatus = rank(a.verification_status) - rank(b.verification_status)
+          if (byStatus !== 0) return byStatus
+          const aName = a.name ?? ""
+          const bName = b.name ?? ""
+          return aName.localeCompare(bName)
+        })
 
-        setDoctors(Array.from(profileMap.values()))
+        setDoctors(combined)
       } catch (err) {
         console.error(err)
       } finally {
@@ -190,9 +181,10 @@ export default function BookConsultationPage() {
     }
     setBooking(true)
     try {
-      const slot = activeSlotsForSelectedDoctor[parseInt(selectedSlotIndex, 10)] ?? null
+      const slotIdx = parseInt(selectedSlotIndex, 10)
+      const slot = activeSlotsForSelectedDoctor[slotIdx] ?? null
       const range = buildSlotDate(selectedDate, slot)
-      if (!range) {
+      if (!range || !slot) {
         toast.error("Invalid date or time selected.")
         return
       }
@@ -235,14 +227,17 @@ export default function BookConsultationPage() {
         }
       }
 
+      const symptomsPayload = symptoms.trim() || reason.trim()
+
       const appointmentPayload: any = {
         patient_id: user.id,
         doctor_id: selectedDoctor,
         slot_id: slotId,
-        reason,
-        symptoms: symptoms || reason,
+        appointment_date: selectedDate,
+        time_slot: slot.label,
+        reason: reason.trim(),
+        symptoms: symptomsPayload,
         status: "pending",
-        patient_info: { name, email, phone },
       }
 
       const { data: appt, error: apptErr } = await supabase
@@ -259,9 +254,6 @@ export default function BookConsultationPage() {
 
       setBooked(appt.id)
       toast.success("Consultation request submitted! Your doctor will review it shortly.")
-      setTimeout(() => {
-        router.push(`/consultation/${appt.id}`)
-      }, 1500)
     } finally {
       setBooking(false)
     }
@@ -271,9 +263,6 @@ export default function BookConsultationPage() {
     selectedSlotIndex,
     reason,
     symptoms,
-    name,
-    email,
-    phone,
     supabase,
     router,
     activeSlotsForSelectedDoctor,
@@ -285,7 +274,7 @@ export default function BookConsultationPage() {
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between space-x-4">
             <div className="flex items-center space-x-4">
-              <Link href="/?stay_home=1">
+              <Link href="/">
                 <Button variant="ghost" size="sm">
                   <ArrowLeft className="w-4 h-4 mr-2" />
                   Back to Home
@@ -307,9 +296,29 @@ export default function BookConsultationPage() {
 
       <div className="container mx-auto px-4 py-8">
         {booked && (
-          <div className="mx-auto max-w-3xl mb-6 flex items-center gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-800 dark:text-emerald-300">
-            <CheckCircle2 className="h-5 w-5" />
-            Request sent! Redirecting you to the consultation details...
+          <div className="mx-auto max-w-3xl mb-6 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-5 text-sm text-emerald-800 dark:text-emerald-300">
+            <div className="flex flex-wrap items-start gap-3">
+              <CheckCircle2 className="h-5 w-5 shrink-0 mt-0.5" />
+              <div className="flex-1 space-y-2">
+                <p className="font-medium">Consultation request submitted successfully!</p>
+                <p className="text-emerald-700/80 dark:text-emerald-300/90 text-xs">
+                  Your doctor will review your request and confirm the appointment time. You can track its status from
+                  your dashboard.
+                </p>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <Button asChild size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5">
+                    <Link href="/patient/dashboard">
+                      <CalendarDays className="h-4 w-4" /> Go to Your History
+                    </Link>
+                  </Button>
+                  <Button asChild size="sm" variant="outline" className="gap-1.5">
+                    <Link href={`/consultation/${booked}`}>
+                      <Clock className="h-4 w-4" /> View Request Details
+                    </Link>
+                  </Button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -318,7 +327,7 @@ export default function BookConsultationPage() {
             <CardHeader>
               <CardTitle>Select Doctor and Time</CardTitle>
               <CardDescription>
-                Choose a doctor, a date, and one of their available time slots.
+                Choose a verified doctor, a preferred date, and one of the available time slots.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -330,29 +339,54 @@ export default function BookConsultationPage() {
                       <SelectValue placeholder={doctorsLoading ? "Loading doctors..." : "Select a doctor"} />
                     </SelectTrigger>
                     <SelectContent>
-                      {doctors.length === 0 && (
+                      {doctorsLoading ? (
+                        <div className="flex items-center gap-2 px-2 py-4 text-xs text-muted-foreground">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading doctors...
+                        </div>
+                      ) : doctors.length === 0 ? (
                         <SelectItem value="none" disabled>
                           No doctors available yet
                         </SelectItem>
+                      ) : (
+                        doctors.map((d) => {
+                          const approved = d.verification_status === "approved"
+                          const pending = d.verification_status === "pending"
+                          return (
+                            <SelectItem key={d.id} value={d.id}>
+                              <div className="flex flex-wrap items-center gap-2 py-0.5">
+                                <Stethoscope className="h-4 w-4 text-primary" />
+                                <span className="font-medium">Dr. {d.name ?? "Unnamed"}</span>
+                                {d.specialty && (
+                                  <span className="text-muted-foreground">
+                                    — {d.specialty}
+                                  </span>
+                                )}
+                                {approved && (
+                                  <Badge variant="outline" className="ml-1 font-normal border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
+                                    <CheckCircle2 className="h-3 w-3 mr-1" /> Verified
+                                  </Badge>
+                                )}
+                                {pending && (
+                                  <Badge variant="outline" className="ml-1 font-normal border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+                                    <Clock className="h-3 w-3 mr-1" /> Pending
+                                  </Badge>
+                                )}
+                                {d.language && (
+                                  <Badge variant="secondary" className="ml-1 font-normal">
+                                    {d.language}
+                                  </Badge>
+                                )}
+                              </div>
+                            </SelectItem>
+                          )
+                        })
                       )}
-                      {doctors.map((d) => (
-                        <SelectItem key={d.id} value={d.id}>
-                          <div className="flex items-center gap-2">
-                            <Stethoscope className="h-4 w-4 text-primary" />
-                            <span>Dr. {d.name ?? "Unnamed"}</span>
-                            {d.specialty && (
-                              <Badge variant="outline" className="ml-1 font-normal">
-                                {d.specialty}
-                              </Badge>
-                            )}
-                          </div>
-                        </SelectItem>
-                      ))}
                     </SelectContent>
                   </Select>
                   {selectedDoctorData && (
                     <p className="mt-2 text-xs text-muted-foreground">
-                      Showing {activeSlotsForSelectedDoctor.length} time slots configured by this doctor.
+                      Showing {activeSlotsForSelectedDoctor.length} time slots
+                      {selectedDoctorData.verification_status === "approved" ? " for this verified doctor." : "."}
                     </p>
                   )}
                 </div>
@@ -393,11 +427,11 @@ export default function BookConsultationPage() {
                           Doctor has not set availability yet
                         </SelectItem>
                       )}
-                      {activeSlotsForSelectedDoctor.map((slot, idx) => (
-                        <SelectItem key={slot.label + idx} value={String(idx)}>
+                      {activeSlotsForSelectedDoctor.map((s, idx) => (
+                        <SelectItem key={s.label + idx} value={String(idx)}>
                           <div className="flex items-center">
                             <Clock className="w-4 h-4 mr-2 text-primary" />
-                            {slot.label}
+                            {s.label}
                           </div>
                         </SelectItem>
                       ))}
@@ -415,12 +449,12 @@ export default function BookConsultationPage() {
                     </div>
                   ) : (
                     <div className="flex flex-wrap gap-2">
-                      {(activeSlotsForSelectedDoctor || FALLBACK_SLOTS).map((slot, idx) => {
+                      {(activeSlotsForSelectedDoctor || FALLBACK_SLOTS).map((s, idx) => {
                         const active = selectedSlotIndex === String(idx)
                         return (
                           <button
                             type="button"
-                            key={slot.label + idx}
+                            key={s.label + idx}
                             onClick={() => setSelectedSlotIndex(String(idx))}
                             disabled={!selectedDate}
                             className={`rounded-full border px-3 py-1 text-xs transition-colors ${
@@ -430,7 +464,7 @@ export default function BookConsultationPage() {
                             }`}
                           >
                             <Clock className="h-3 w-3 inline mr-1.5 align-[-2px]" />
-                            {slot.label}
+                            {s.label}
                           </button>
                         )
                       })}

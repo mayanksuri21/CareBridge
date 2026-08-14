@@ -12,7 +12,8 @@ import {
   Inbox,
   AlertCircle,
   CheckCircle2,
-  FilePrescription,
+  XCircle,
+  FileText,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -36,6 +37,8 @@ type PendingRequest = {
   status: string | null
   created_at: string
   slot_id: string | null
+  appointment_date: string | null
+  time_slot: string | null
   patient: {
     name: string | null
     email: string | null
@@ -49,30 +52,48 @@ type PendingRequest = {
 
 type PendingRequestsPanelProps = {
   doctorId: string
+  onMetricsChange?: () => void
 }
 
-function formatSlot(slot: { start_time: string; end_time: string } | null) {
-  if (!slot) return "Time not set"
-  const start = new Date(slot.start_time)
-  const end = new Date(slot.end_time)
-  const datePart = start.toLocaleDateString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  })
-  const timePart = start.toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  })
-  return `${datePart} · ${timePart}`
+function formatSlot(request: PendingRequest) {
+  if (request.appointment_date && request.time_slot) {
+    const d = new Date(request.appointment_date + "T00:00:00")
+    if (!Number.isNaN(d.getTime())) {
+      const datePart = d.toLocaleDateString(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      })
+      return `${datePart} · ${request.time_slot}`
+    }
+  }
+  if (request.schedule_slots) {
+    const start = new Date(request.schedule_slots.start_time)
+    const end = new Date(request.schedule_slots.end_time)
+    const datePart = start.toLocaleDateString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    })
+    const timePart = start.toLocaleTimeString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    })
+    return `${datePart} · ${timePart}`
+  }
+  return "Time not set"
 }
 
-export function PendingRequestsPanel({ doctorId }: PendingRequestsPanelProps) {
+export function PendingRequestsPanel({ doctorId, onMetricsChange }: PendingRequestsPanelProps) {
   const router = useRouter()
   const supabase = useMemo(() => createSupabaseBrowserClient(), [])
   const [requests, setRequests] = useState<PendingRequest[]>([])
   const [loading, setLoading] = useState(true)
-  const [acceptingId, setAcceptingId] = useState<string | null>(null)
+  const [workingId, setWorkingId] = useState<string | null>(null)
+
+  const notifyMetrics = useCallback(() => {
+    onMetricsChange?.()
+  }, [onMetricsChange])
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -80,10 +101,10 @@ export function PendingRequestsPanel({ doctorId }: PendingRequestsPanelProps) {
       const { data, error } = await supabase
         .from("appointments")
         .select(
-          "id, patient_id, symptoms, reason, status, created_at, slot_id, patient:profiles!appointments_patient_id_fkey(id, name, email, phone), schedule_slots(start_time, end_time)",
+          "id, patient_id, symptoms, reason, status, created_at, slot_id, appointment_date, time_slot, patient:profiles!appointments_patient_id_fkey(id, name, email, phone), schedule_slots(start_time, end_time)",
         )
         .eq("doctor_id", doctorId)
-        .in("status", ["pending", "requested", "booked"])
+        .in("status", ["pending", "requested", "booked", "scheduled"])
         .order("created_at", { ascending: false })
       if (error) {
         console.error(error)
@@ -109,17 +130,20 @@ export function PendingRequestsPanel({ doctorId }: PendingRequestsPanelProps) {
           table: "appointments",
           filter: `doctor_id=eq.${doctorId}`,
         },
-        () => refresh(),
+        () => {
+          void refresh()
+          notifyMetrics()
+        },
       )
       .subscribe()
 
     return () => {
       void supabase.removeChannel(channel)
     }
-  }, [refresh, doctorId, supabase])
+  }, [refresh, doctorId, supabase, notifyMetrics])
 
   const acceptRequest = async (requestId: string) => {
-    setAcceptingId(requestId)
+    setWorkingId(requestId)
     try {
       const { error } = await supabase
         .from("appointments")
@@ -128,15 +152,36 @@ export function PendingRequestsPanel({ doctorId }: PendingRequestsPanelProps) {
         .eq("doctor_id", doctorId)
       if (error) throw error
       toast.success("Request accepted — moved to scheduled consultations.")
+      notifyMetrics()
     } catch (err) {
       console.error(err)
       toast.error("Could not accept this request. Please try again.")
     } finally {
-      setAcceptingId(null)
+      setWorkingId(null)
     }
   }
 
-  const pendingCount = requests.filter((r) => r.status === "pending").length
+  const rejectRequest = async (requestId: string) => {
+    setWorkingId(requestId)
+    try {
+      const { error } = await supabase
+        .from("appointments")
+        .update({ status: "cancelled" })
+        .eq("id", requestId)
+        .eq("doctor_id", doctorId)
+      if (error) throw error
+      toast.success("Request cancelled — patient will be notified to reschedule.")
+      notifyMetrics()
+    } catch (err) {
+      console.error(err)
+      toast.error("Could not cancel this request. Please try again.")
+    } finally {
+      setWorkingId(null)
+    }
+  }
+
+  const pendingCount = requests.filter((r) => r.status === "pending" || r.status === "requested").length
+  const scheduledCount = requests.filter((r) => r.status === "scheduled" || r.status === "booked").length
 
   return (
     <Card>
@@ -151,9 +196,14 @@ export function PendingRequestsPanel({ doctorId }: PendingRequestsPanelProps) {
                   {pendingCount} pending
                 </Badge>
               )}
+              {scheduledCount > 0 && (
+                <Badge variant="outline" className="ml-1 border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
+                  {scheduledCount} scheduled
+                </Badge>
+              )}
             </CardTitle>
             <CardDescription>
-              Review patient requests, accept consultations, and begin video calls or write prescriptions.
+              Review patient requests, accept or reschedule consultations, and begin video calls or write prescriptions.
             </CardDescription>
           </div>
           <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
@@ -177,7 +227,7 @@ export function PendingRequestsPanel({ doctorId }: PendingRequestsPanelProps) {
               Patient consultation requests will appear here once submitted. Use the Available Slots manager to set the
               times you prefer to work.
             </p>
-            <Link href="/?stay_home=1" className="mt-4">
+            <Link href="/" className="mt-4">
               <Button variant="outline" size="sm">
                 View public site
               </Button>
@@ -188,6 +238,7 @@ export function PendingRequestsPanel({ doctorId }: PendingRequestsPanelProps) {
             {requests.map((request) => {
               const pending = request.status === "pending" || request.status === "requested"
               const scheduled = request.status === "booked" || request.status === "scheduled"
+              const isWorking = workingId === request.id
               return (
                 <div
                   key={request.id}
@@ -223,13 +274,13 @@ export function PendingRequestsPanel({ doctorId }: PendingRequestsPanelProps) {
                     <div className="flex flex-wrap items-start gap-4 text-sm text-muted-foreground">
                       <div className="flex items-center gap-1.5">
                         <Clock className="h-4 w-4" />
-                        {formatSlot(request.schedule_slots)}
+                        {formatSlot(request)}
                       </div>
                       {(request.symptoms || request.reason) && (
                         <div className="flex items-start gap-1.5 max-w-full">
                           <MessageSquare className="h-4 w-4 mt-0.5 shrink-0" />
                           <p className="line-clamp-3 max-w-2xl">
-                            {request.symptoms || request.reason}
+                            {request.reason || request.symptoms}
                           </p>
                         </div>
                       )}
@@ -237,19 +288,35 @@ export function PendingRequestsPanel({ doctorId }: PendingRequestsPanelProps) {
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     {pending && (
-                      <Button
-                        size="sm"
-                        onClick={() => acceptRequest(request.id)}
-                        disabled={acceptingId === request.id}
-                        className="gap-1.5"
-                      >
-                        {acceptingId === request.id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <CheckCircle2 className="h-4 w-4" />
-                        )}
-                        Accept Request
-                      </Button>
+                      <>
+                        <Button
+                          size="sm"
+                          onClick={() => acceptRequest(request.id)}
+                          disabled={isWorking}
+                          className="gap-1.5"
+                        >
+                          {isWorking ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <CheckCircle2 className="h-4 w-4" />
+                          )}
+                          Accept
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => rejectRequest(request.id)}
+                          disabled={isWorking}
+                          className="gap-1.5 border-destructive/40 text-destructive hover:bg-destructive/10"
+                        >
+                          {isWorking ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <XCircle className="h-4 w-4" />
+                          )}
+                          Reject / Reschedule
+                        </Button>
+                      </>
                     )}
                     <Button
                       asChild
@@ -258,7 +325,7 @@ export function PendingRequestsPanel({ doctorId }: PendingRequestsPanelProps) {
                       className="gap-1.5"
                     >
                       <Link href={`/consultation/${request.id}`}>
-                        <Video className="h-4 w-4" /> Start Video Call
+                        <Video className="h-4 w-4" /> Start Consultation
                       </Link>
                     </Button>
                     <PrescriptionModal
@@ -267,8 +334,14 @@ export function PendingRequestsPanel({ doctorId }: PendingRequestsPanelProps) {
                       patientId={request.patient_id}
                       patientName={request.patient?.name}
                       initialChiefComplaint={request.symptoms || request.reason}
-                      triggerLabel="Create Prescription"
-                      onSaved={refresh}
+                      triggerLabel="Quick Prescription"
+                      triggerVariant="outline"
+                      triggerSize="sm"
+                      triggerIcon={<FileText className="h-4 w-4" />}
+                      onSaved={() => {
+                        void refresh()
+                        notifyMetrics()
+                      }}
                     />
                   </div>
                 </div>
