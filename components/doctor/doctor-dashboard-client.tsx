@@ -11,9 +11,14 @@ import {
   CalendarOff,
   CalendarCheck,
   Stethoscope,
-  MessageSquare
+  MessageSquare,
+  Download,
+  Activity
 } from "lucide-react"
 import { toast } from "sonner"
+
+import { Input } from "@/components/ui/input"
+import { generatePrescriptionPDF } from "@/lib/generate-prescription-pdf"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -63,6 +68,45 @@ export function DoctorDashboardClient({
   const [savedSchedule, setSavedSchedule] = useState<any[]>([])
   const [loadingSchedule, setLoadingSchedule] = useState(true)
   const [modalOpen, setModalOpen] = useState(false)
+
+  // EHR Portal state variables
+  const [patientQuery, setPatientQuery] = useState("")
+  const [patients, setPatients] = useState<any[]>([])
+  const [loadingPatients, setLoadingPatients] = useState(false)
+  const [selectedPatient, setSelectedPatient] = useState<any | null>(null)
+
+  const searchPatients = useCallback(async (q: string = "") => {
+    try {
+      setLoadingPatients(true)
+      const res = await fetch(`/api/doctor/patients?doctor_id=${doctorId}&q=${q}`)
+      if (!res.ok) throw new Error("Failed to search patients")
+      const data = await res.json()
+      setPatients(data.patients || [])
+      
+      // Keep selected patient profile in sync if details change
+      if (selectedPatient) {
+        const updatedSelected = (data.patients || []).find((p: any) => p.patient_id === selectedPatient.patient_id)
+        if (updatedSelected) {
+          setSelectedPatient(updatedSelected)
+        }
+      }
+    } catch (err) {
+      console.error(err)
+      toast.error("Failed to load patient history records.")
+    } finally {
+      setLoadingPatients(false)
+    }
+  }, [doctorId, selectedPatient])
+
+  const handlePatientSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    void searchPatients(patientQuery)
+  }
+
+  // Load patient list on component mount
+  useEffect(() => {
+    void searchPatients()
+  }, [])
 
   // Load saved schedule presets with local storage caching
   useEffect(() => {
@@ -281,6 +325,190 @@ export function DoctorDashboardClient({
 
       <section className="container mx-auto px-4 pb-16">
         <TodayConsultations doctorId={doctorId} />
+      </section>
+
+      {/* Patient Medical History & EHR Search Portal Section */}
+      <section className="container mx-auto px-4 pb-16">
+        <Card className="w-full">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              🩺 Patient Medical History & EHR Search Portal
+            </CardTitle>
+            <CardDescription>
+              Search patients by Name, Email, or Blood Group to view complete clinical timelines.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handlePatientSearchSubmit} className="flex gap-2 mb-6">
+              <Input
+                type="text"
+                placeholder="Search patient by name, email, or blood group..."
+                value={patientQuery}
+                onChange={(e) => setPatientQuery(e.target.value)}
+                className="max-w-md bg-muted/40"
+              />
+              <Button type="submit">Search</Button>
+              {patientQuery && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setPatientQuery("");
+                    void searchPatients("");
+                  }}
+                >
+                  Clear
+                </Button>
+              )}
+            </form>
+
+            <div className="grid gap-6 md:grid-cols-[1fr_2.2fr]">
+              {/* Left Column: Patients List */}
+              <div className="border rounded-xl p-3 bg-muted/10 max-h-[500px] overflow-y-auto space-y-2">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block mb-3 px-1">
+                  Patients ({patients.length})
+                </span>
+                
+                {loadingPatients ? (
+                  <div className="text-center py-8 text-sm text-muted-foreground">
+                    Loading records...
+                  </div>
+                ) : patients.length === 0 ? (
+                  <div className="text-center py-8 text-sm text-muted-foreground">
+                    No matching patients found.
+                  </div>
+                ) : (
+                  patients.map((p) => {
+                    const isSelected = selectedPatient?.patient_id === p.patient_id
+                    return (
+                      <div
+                        key={p.patient_id}
+                        onClick={() => setSelectedPatient(p)}
+                        className={`p-3 rounded-lg border cursor-pointer transition-all ${
+                          isSelected
+                            ? "border-primary bg-primary/10 text-primary-foreground"
+                            : "border-border hover:bg-muted/40 text-foreground"
+                        }`}
+                      >
+                        <span className="font-semibold block text-sm">{p.name}</span>
+                        <span className="text-xs text-muted-foreground block truncate">{p.email}</span>
+                        <div className="flex justify-between items-center mt-2 text-[10px] text-muted-foreground">
+                          <span>Blood: {p.blood_group}</span>
+                          <span>Visits: {p.total_visits}</span>
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+
+              {/* Right Column: Selected Patient Details & Medical History Timeline */}
+              <div className="border rounded-xl p-5 bg-card min-h-[400px]">
+                {selectedPatient ? (
+                  <div className="space-y-6">
+                    {/* Patient Header Bio */}
+                    <div className="border-b pb-4">
+                      <h3 className="text-2xl font-bold tracking-tight text-foreground">{selectedPatient.name}</h3>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3 text-xs">
+                        <div className="bg-muted/30 p-2.5 rounded-lg">
+                          <span className="text-muted-foreground block font-medium">Age / Gender</span>
+                          <span className="font-semibold text-sm mt-0.5 block">{selectedPatient.age} yrs / {selectedPatient.gender}</span>
+                        </div>
+                        <div className="bg-muted/30 p-2.5 rounded-lg">
+                          <span className="text-muted-foreground block font-medium">Blood Group</span>
+                          <span className="font-semibold text-sm mt-0.5 block text-rose-500">{selectedPatient.blood_group}</span>
+                        </div>
+                        <div className="bg-muted/30 p-2.5 rounded-lg">
+                          <span className="text-muted-foreground block font-medium">Phone Number</span>
+                          <span className="font-semibold text-sm mt-0.5 block">{selectedPatient.phone}</span>
+                        </div>
+                        <div className="bg-muted/30 p-2.5 rounded-lg">
+                          <span className="text-muted-foreground block font-medium">Patient UUID</span>
+                          <span className="font-semibold text-[10px] mt-1 block truncate text-muted-foreground">{selectedPatient.patient_id}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Medical timeline splitting */}
+                    <div className="grid gap-6 md:grid-cols-2">
+                      {/* Consultation History Timeline */}
+                      <div className="space-y-3">
+                        <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Consultation History ({selectedPatient.appointments.length})</h4>
+                        <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+                          {selectedPatient.appointments.map((appt: any, idx: number) => {
+                            const dateObj = new Date(appt.scheduled_at || appt.appointment_date)
+                            return (
+                              <div key={idx} className="border rounded-lg p-3 bg-muted/10 space-y-1 text-xs">
+                                <div className="flex justify-between items-center">
+                                  <span className="font-semibold text-[11px] text-muted-foreground">
+                                    {isNaN(dateObj.getTime()) ? "Scheduled slot" : dateObj.toLocaleDateString()}
+                                  </span>
+                                  <Badge variant="outline" className="text-[9px] uppercase">
+                                    {appt.status}
+                                  </Badge>
+                                </div>
+                                <p className="text-foreground font-medium">{appt.reason || "General Checkup"}</p>
+                                {appt.symptoms && (
+                                  <p className="text-[10px] text-muted-foreground bg-muted/20 p-1.5 rounded">
+                                    <span className="font-semibold">Symptoms:</span> {appt.symptoms}
+                                  </p>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Prescriptions & Diagnosis history */}
+                      <div className="space-y-3">
+                        <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Prescribed Diagnoses ({selectedPatient.prescriptions.length})</h4>
+                        <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+                          {selectedPatient.prescriptions.length === 0 ? (
+                            <p className="text-xs text-muted-foreground py-4">No historical prescriptions issued by you.</p>
+                          ) : (
+                            selectedPatient.prescriptions.map((rx: any, idx: number) => {
+                              const dateObj = new Date(rx.created_at)
+                              return (
+                                <div key={idx} className="border rounded-lg p-3 bg-muted/10 space-y-1 text-xs">
+                                  <div className="flex justify-between items-center">
+                                    <span className="font-semibold text-[11px] text-muted-foreground">
+                                      {isNaN(dateObj.getTime()) ? "Issued" : dateObj.toLocaleDateString()}
+                                    </span>
+                                    <Button
+                                      size="icon"
+                                      variant="ghost"
+                                      className="h-6 w-6 text-primary hover:bg-primary/10"
+                                      onClick={() => generatePrescriptionPDF({
+                                        ...rx,
+                                        doctor_name: doctorName
+                                      })}
+                                    >
+                                      <Download className="h-3 w-3" />
+                                    </Button>
+                                  </div>
+                                  <p className="text-foreground font-semibold">{rx.diagnosis || "General Consultation"}</p>
+                                  <p className="text-[10px] text-muted-foreground line-clamp-3">
+                                    {rx.advice || rx.instructions || rx.note || "No advice notes."}
+                                  </p>
+                                </div>
+                              )
+                            })
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center text-center h-full text-sm text-muted-foreground py-20 space-y-2">
+                    <Activity className="h-10 w-10 text-muted-foreground/40" />
+                    <p className="font-medium text-foreground">No Patient Selected</p>
+                    <p className="max-w-xs text-xs">Select a patient from the search list to view their complete Electronic Health Record (EHR) timeline.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </section>
 
       {/* Availability Configuration Dialog Component */}

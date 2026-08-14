@@ -78,6 +78,17 @@ export function PatientDashboardClient({
   const [loadingPrescriptions, setLoadingPrescriptions] = useState(true)
   const [appointments, setAppointments] = useState<any[]>(initialAppointments)
   const [loadingAppointments, setLoadingAppointments] = useState(initialAppointments.length === 0)
+  
+  const [symptomLogs, setSymptomLogs] = useState<any[]>([])
+
+  useEffect(() => {
+    try {
+      const data = JSON.parse(localStorage.getItem('patient_symptom_history') || '[]')
+      setSymptomLogs(data)
+    } catch (_) {
+      setSymptomLogs([])
+    }
+  }, [])
 
   const upcomingCount = appointments.filter((appt) =>
     appt.status === "scheduled" || appt.status === "confirmed" || appt.status === "booked"
@@ -431,80 +442,78 @@ export function PatientDashboardClient({
               <CardHeader>
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <CardTitle>Request a Consultation</CardTitle>
+                    <CardTitle className="flex items-center gap-2">
+                      🩺 Recent AI Symptom Assessments & Tracking
+                    </CardTitle>
                     <CardDescription>
-                      Share your symptoms and our care team will match you with a suitable doctor.
+                      Your recent AI triage analyses, severity levels, and clinical insights.
                     </CardDescription>
                   </div>
-                  {submitted && (
-                    <Badge variant="secondary" className="gap-1.5">
-                      <CheckCircle2 className="h-3.5 w-3.5" /> Requested
-                    </Badge>
-                  )}
                 </div>
               </CardHeader>
               <CardContent>
-                <form className="space-y-4" onSubmit={handleRequestConsultation}>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-2 sm:col-span-2">
-                      <label className="text-sm font-medium" htmlFor="primary-concern">
-                        Primary Concern
-                      </label>
-                      <Input
-                        id="primary-concern"
-                        value={primaryConcern}
-                        onChange={(e) => setPrimaryConcern(e.target.value)}
-                        placeholder="e.g. Fever for last 2 days"
-                      />
-                    </div>
-                    <div className="space-y-2 sm:col-span-2">
-                      <label className="text-sm font-medium" htmlFor="symptoms-text">
-                        Symptoms (optional)
-                      </label>
-                      <Textarea
-                        id="symptoms-text"
-                        value={symptoms}
-                        onChange={(e) => setSymptoms(e.target.value)}
-                        rows={4}
-                        placeholder="List symptoms you're experiencing — cough, body ache, fatigue, etc."
-                      />
-                    </div>
-                    <div className="space-y-2 sm:col-span-2">
-                      <label className="text-sm font-medium" htmlFor="doctor-id">
-                        Prefer a specific doctor? (optional — Doctor UUID)
-                      </label>
-                      <Input
-                        id="doctor-id"
-                        value={bookingDoctorId}
-                        onChange={(e) => setBookingDoctorId(e.target.value)}
-                        placeholder="Leave empty for auto-assignment"
-                      />
-                    </div>
+                {symptomLogs.length === 0 ? (
+                  <div className="flex flex-col items-center rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground bg-muted/10">
+                    <Activity className="h-8 w-8 text-muted-foreground/60 mb-2" />
+                    No AI symptom assessments logged yet. Run your first check to get clinical guidance.
+                    <Button asChild className="mt-4 bg-emerald-600 hover:bg-emerald-700 text-white gap-1">
+                      <Link href="/symptoms">
+                        Start AI Assessment <ArrowRight className="h-4 w-4" />
+                      </Link>
+                    </Button>
                   </div>
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p className="text-xs text-muted-foreground">
-                      Your request is saved to the appointments table with status &quot;scheduled&quot;.
-                    </p>
-                    <div className="flex gap-2">
-                      <Button
-                        asChild
-                        type="button"
-                        variant="outline"
-                      >
-                        <Link href="/consultation/book">Full booking page</Link>
-                      </Button>
-                      <Button type="submit" disabled={submitting || submitted} className="gap-2">
-                        {submitting ? (
-                          "Submitting..."
-                        ) : (
-                          <>
-                            <Send className="h-4 w-4" /> Submit Request
-                          </>
-                        )}
-                      </Button>
-                    </div>
+                ) : (
+                  <div className="space-y-4">
+                    {symptomLogs.map((log: any, idx: number) => {
+                      const dateObj = new Date(log.timestamp)
+                      const isEmergency = log.urgency === "emergency"
+                      const isUrgent = log.urgency === "urgent"
+                      
+                      return (
+                        <div
+                          key={idx}
+                          className="flex flex-col md:flex-row md:items-center justify-between border rounded-xl p-4 bg-muted/10 gap-4"
+                        >
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-semibold text-foreground">{log.condition || "General Symptoms"}</span>
+                              <Badge
+                                variant={isEmergency ? "destructive" : isUrgent ? "outline" : "secondary"}
+                                className={isUrgent ? "border-amber-500 text-amber-700" : ""}
+                              >
+                                {log.urgency ? log.urgency.charAt(0).toUpperCase() + log.urgency.slice(1) : "Routine"}
+                              </Badge>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              📅 {isNaN(dateObj.getTime()) ? "Unknown Date" : dateObj.toLocaleString("en-US", {
+                                day: "numeric",
+                                month: "short",
+                                year: "numeric",
+                                hour: "numeric",
+                                minute: "2-digit",
+                                hour12: true
+                              })}
+                            </p>
+                            {log.primary_concern && (
+                              <p className="text-xs text-foreground/80 mt-1">
+                                <span className="font-medium text-muted-foreground">Primary Concern:</span> {log.primary_concern}
+                              </p>
+                            )}
+                            <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
+                              {log.description || "No recommendations logged."}
+                            </p>
+                          </div>
+                          
+                          <Button asChild size="sm" variant="outline" className="shrink-0 gap-1.5 self-start md:self-center">
+                            <Link href="/symptoms">
+                              Run New Check
+                            </Link>
+                          </Button>
+                        </div>
+                      )
+                    })}
                   </div>
-                </form>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
