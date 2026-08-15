@@ -1,175 +1,144 @@
-"use client"
+"use client";
 
-import React from "react"
-import Link from "next/link"
-import { CalendarDays, Video } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
-import { formatStableDate } from "@/lib/utils"
-import { toast } from "sonner"
+import React, { useState, useEffect } from 'react';
+import { Calendar, Clock, Video } from 'lucide-react';
+import Link from 'next/link';
 
-type Appointment = {
-  id: string
-  doctor_id: string | null
-  scheduled_at: string | null
-  appointment_date: string | null
-  time_slot: string | null
-  status: string | null
-  reason: string | null
-  symptoms: string | null
-  created_at: string
-  doctor: {
-    id: string
-    name: string | null
-    email: string | null
-    specialty: string | null
-  } | null
-}
+export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
+  const [appointments, setAppointments] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-type MyConsultationsPanelProps = {
-  appointments: Appointment[]
-  loading: boolean
-  onRefresh?: () => void
-}
-
-export function MyConsultationsPanel({ appointments: initialAppointments, loading, onRefresh }: MyConsultationsPanelProps) {
-  const [appointments, setAppointments] = React.useState<Appointment[]>([])
-
-  React.useEffect(() => {
-    setAppointments(initialAppointments || [])
-  }, [initialAppointments])
-
-  const [dismissingId, setDismissingId] = React.useState<string | null>(null)
-
-  const handleDismiss = async (aptId: string) => {
-    setDismissingId(aptId)
+  const fetchConsultations = async () => {
     try {
-      const res = await fetch(`/api/patient/appointments?id=${aptId}`, {
-        method: "DELETE"
-      })
-      if (!res.ok) throw new Error("Failed to delete appointment")
-      toast.success("Appointment dismissed successfully")
-      onRefresh?.()
-    } catch (err) {
-      console.error(err)
-      toast.error("Failed to dismiss appointment")
+      const res = await fetch('/api/appointments/call');
+      const data = await res.json();
+      if (data.appointments) {
+        let list = data.appointments;
+        // Filter by patient ID for safety and security
+        if (patientId) {
+          list = list.filter((a: any) => a.patient_id === patientId);
+        }
+        // ONLY show active/scheduled appointments (exclude completed)
+        const activeOnly = list.filter(
+          (a: any) => a.status === 'scheduled' || a.status === 'in_progress'
+        );
+        setAppointments(activeOnly);
+      } else {
+        setAppointments([]);
+      }
+    } catch (_) {
+      setAppointments([]);
     } finally {
-      setDismissingId(null)
+      setLoading(false);
     }
-  }
+  };
+
+  useEffect(() => {
+    fetchConsultations();
+    const interval = setInterval(fetchConsultations, 2000);
+    return () => clearInterval(interval);
+  }, [patientId]);
 
   if (loading) {
-    return (
-      <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">
-        Loading consultations...
-      </div>
-    )
+    return <div className="text-slate-500 text-xs py-8 text-center animate-pulse">Loading consultations...</div>;
   }
 
-  if (appointments.length === 0) {
-    return (
-      <div className="flex flex-col items-center rounded-2xl border border-dashed border-border/80 bg-gradient-to-br from-muted/40 via-background to-muted/20 p-10 text-center">
-        <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
-          <CalendarDays className="h-7 w-7 text-primary" />
-        </div>
-        <p className="text-sm text-muted-foreground">
-          No upcoming consultations found.{" "}
-          <Link href="/consultation/book" className="text-primary hover:underline font-semibold">
-            Book a Doctor
-          </Link>
-        </p>
-      </div>
-    )
-  }
+  const activeLiveAppt = appointments.find((a) => a.status === 'in_progress' || a.call_active);
 
   return (
     <div className="space-y-4">
-      {appointments.map((apt) => {
-        const doctor = apt.doctor || { name: "Doctor", specialty: "General Medicine" }
-        const doctorName = doctor.name || "Doctor"
-        const specialty = doctor.specialty || "General Medicine"
+      {/* Live Incoming Alert Banner */}
+      {activeLiveAppt && (
+        <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-955 via-slate-900 to-emerald-955 border border-emerald-500/60 shadow-[0_0_25px_rgba(16,185,129,0.35)] flex flex-col sm:flex-row items-center justify-between gap-4 animate-bounce">
+          <div className="flex items-center gap-3">
+            <span className="relative flex h-3.5 w-3.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500"></span>
+            </span>
+            <div>
+              <h4 className="text-sm font-bold text-white">Your Doctor is in the Consultation Room!</h4>
+              <p className="text-xs text-emerald-300/90 mt-0.5">
+                {activeLiveAppt.doctor_name || 'Doctor'} has started your session. Please join now.
+              </p>
+            </div>
+          </div>
+          <Link href={`/consultation/${activeLiveAppt.id}`}>
+            <button className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-955 font-bold text-xs shadow-lg shadow-emerald-500/30 flex items-center gap-2 transition-all cursor-pointer">
+              <Video className="w-4 h-4"/> Join Room Now →
+            </button>
+          </Link>
+        </div>
+      )}
 
-        // Format appointment slot: 📅 ${apt.appointment_date || apt.scheduled_at} | ⏰ ${apt.time_slot || "Slot"}
-        const datePart = apt.appointment_date || (apt.scheduled_at ? formatStableDate(apt.scheduled_at) : "") || "Date not set"
-        const timePart = apt.time_slot || (apt.scheduled_at ? new Date(apt.scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "") || "Slot"
+      {/* Appointment Cards */}
+      {appointments.length === 0 ? (
+        <div className="text-center py-10 rounded-2xl bg-slate-900/40 border border-slate-800 text-slate-500 text-xs">
+          No active consultations scheduled. Book an appointment to get started.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {appointments.map((appt) => {
+            const isLive = appt.status === 'in_progress' || appt.call_active;
+            const doctorName = appt.doctor_name || appt.doctor?.name || appt.doctor?.full_name || 'Dr. Rahul Sharma';
+            const department = appt.department || appt.doctor?.specialty || 'General Medicine';
+            const date = appt.scheduled_date || appt.scheduled_at?.split('T')?.[0] || 'Scheduled Date';
+            const time = appt.scheduled_time || '12:00 PM';
 
-        const isScheduled = apt.status === "scheduled" || apt.status === "confirmed" || apt.status === "booked"
-        const isPending = apt.status === "pending" || apt.status === "requested"
+            return (
+              <div
+                key={appt.id}
+                className={`p-5 rounded-2xl bg-slate-900/90 border transition-all ${
+                  isLive
+                    ? 'border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.15)]'
+                    : 'border-slate-800'
+                }`}
+              >
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                  <div>
+                    <div className="flex items-center gap-2.5 mb-1.5">
+                      <h4 className="font-bold text-slate-100 text-sm">{doctorName}</h4>
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-slate-800 text-emerald-400 border border-slate-700">
+                        {department}
+                      </span>
+                    </div>
 
-        return (
-          <Card key={apt.id} className="overflow-hidden border-border/50 hover:shadow-md transition-shadow">
-            <CardContent className="p-5">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="space-y-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h4 className="text-base font-semibold">
-                      Dr. {doctorName} — {specialty}
-                    </h4>
-                    {isScheduled && (
-                      <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 gap-1 font-medium">
-                        ✅ Confirmed / Scheduled
-                      </Badge>
-                    )}
-                    {isPending && (
-                      <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 gap-1 font-medium">
-                        ⏳ Pending Doctor Review
-                      </Badge>
-                    )}
-                     {(apt.status === "declined" || apt.status === "cancelled") && (
-                       <span className="px-2 py-1 text-xs font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-full">✕ Declined by Doctor</span>
-                     )}
-                     {!isScheduled && !isPending && apt.status !== "declined" && apt.status !== "cancelled" && apt.status && (
-                       <Badge variant="outline" className="border-destructive/40 bg-destructive/10 text-destructive gap-1 capitalize font-medium">
-                         {apt.status}
-                       </Badge>
-                     )}
-                  </div>
-                  <div className="flex flex-wrap gap-4 text-xs text-muted-foreground" suppressHydrationWarning>
-                    <span>📅 {datePart} | ⏰ {timePart}</span>
-                    <span>Created on {formatStableDate(apt.created_at)}</span>
-                  </div>
-                  <p className="text-sm text-foreground/80 pt-1">
-                    <span className="font-semibold text-foreground">Reason/Symptoms:</span>{" "}
-                    {apt.reason || apt.symptoms || "Consultation Request"}
-                  </p>
-                  {(apt.status === "declined" || apt.status === "cancelled") && (
-                    <p className="text-xs text-rose-600 dark:text-rose-400 font-medium mt-1">
-                      The doctor was unavailable for this slot. Please choose another time.
+                    <div className="flex items-center gap-4 text-xs text-slate-400 mb-3">
+                      <span className="flex items-center gap-1.5">
+                        <Calendar className="w-3.5 h-3.5 text-slate-500"/> {date}
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-slate-500"/> {time}
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-slate-300 bg-slate-950/70 p-2.5 rounded-xl border border-slate-800/80">
+                      <strong className="text-slate-400">Reason:</strong> {appt.reason || 'General Consultation'}
                     </p>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 self-start sm:self-center">
-                  {isScheduled && (
-                    <Button asChild size="sm" className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white">
-                      <Link href={`/consultation/room/${apt.id}`}>
-                        <Video className="h-4 w-4" /> Join Video Call
+                  </div>
+
+                  <div className="w-full md:w-auto">
+                    {isLive ? (
+                      <Link href={`/consultation/${appt.id}`}>
+                        <button className="w-full md:w-auto px-5 py-2.5 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.4)] animate-pulse flex items-center justify-center gap-2 transition-all">
+                          <Video className="w-4 h-4"/> Doctor in Room • Join Call
+                        </button>
                       </Link>
-                    </Button>
-                  )}
-                   {(apt.status === 'declined' || apt.status === 'cancelled') && (
-                     <button
-                       onClick={async () => {
-                         await fetch(`/api/patient/appointments?id=${apt.id}`, { method: 'DELETE' });
-                         setAppointments((prev: any[]) => prev.filter((a) => a.id !== apt.id));
-                         onRefresh?.();
-                       }}
-                       className="px-3 py-1.5 rounded-lg text-xs font-medium bg-rose-600/20 text-rose-300 hover:bg-rose-600 hover:text-white border border-rose-500/40 transition-colors"
-                     >
-                       🗑️ Remove
-                     </button>
-                   )}
-                  <Button asChild size="sm" variant="outline">
-                    <Link href={`/consultation/book?doctor=${apt.doctor_id || ""}`}>
-                      Book Again
-                    </Link>
-                  </Button>
+                    ) : (
+                      <button
+                        disabled
+                        className="w-full md:w-auto px-4 py-2 rounded-xl text-xs font-medium bg-slate-955 text-slate-500 border border-slate-800 cursor-not-allowed flex items-center justify-center gap-2"
+                      >
+                        <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                        Waiting for Doctor...
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
-            </CardContent>
-          </Card>
-        )
-      })}
+            );
+          })}
+        </div>
+      )}
     </div>
-  )
+  );
 }

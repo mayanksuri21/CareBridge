@@ -91,8 +91,12 @@ export function PatientDashboardClient({
   }, [])
 
   const upcomingCount = appointments.filter((appt) =>
-    appt.status === "scheduled" || appt.status === "confirmed" || appt.status === "booked"
+    appt.status === "scheduled" || appt.status === "confirmed" || appt.status === "booked" || appt.status === "in_progress"
   ).length
+
+  const liveAppointment = appointments.find((appt) =>
+    appt.status === "in_progress" || appt.call_active
+  )
 
   const greeting = (() => {
     const hour = new Date().getHours()
@@ -148,6 +152,23 @@ export function PatientDashboardClient({
   useEffect(() => {
     void refreshAppointments()
   }, [refreshAppointments])
+
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch('/api/appointments/call');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.appointments) {
+            setAppointments(data.appointments.filter((a: any) => a.patient_id === patientId));
+          }
+        }
+      } catch (err) {
+        console.error("Failed to poll call state:", err);
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [patientId]);
 
   useEffect(() => {
     const channel = supabase
@@ -252,55 +273,84 @@ export function PatientDashboardClient({
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-30">
-        <div className="container mx-auto flex flex-wrap items-center justify-between gap-4 px-4 py-5">
-          <div>
-            <Link href="/" className="text-sm font-medium text-primary hover:text-primary/90 transition-colors">
-              CareBridge
-            </Link>
-            <h1 className="mt-1 text-2xl md:text-3xl font-semibold tracking-tight">
-              Welcome back, {patientName}
-            </h1>
-            {patientEmail && (
-              <p className="text-sm text-muted-foreground">{patientEmail}</p>
-            )}
+    <div className="min-h-screen bg-slate-950 text-slate-100 relative overflow-hidden font-sans pb-12">
+      {/* Ambient background glows */}
+      <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full bg-emerald-500/5 blur-[120px] pointer-events-none -z-10" />
+      <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] rounded-full bg-cyan-500/5 blur-[120px] pointer-events-none -z-10" />
+
+      <header className="border-b border-slate-900 bg-slate-950/80 backdrop-blur supports-[backdrop-filter]:bg-slate-950/65 sticky top-0 z-30 shadow-lg">
+        <div className="container mx-auto flex flex-wrap items-center justify-between gap-4 px-6 py-5">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-emerald-400 to-cyan-500 flex items-center justify-center shadow-lg shadow-emerald-500/25">
+              <Activity className="h-5 w-5 text-slate-950 font-bold" />
+            </div>
+            <div>
+              <Link href="/" className="text-xs font-semibold tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-cyan-400 hover:opacity-90 transition-opacity">
+                CareBridge Telehealth
+              </Link>
+              <h1 className="mt-0.5 text-xl font-extrabold tracking-tight text-white">
+                Welcome back, {patientName}
+              </h1>
+            </div>
           </div>
-          <nav className="flex items-center gap-2">
-            <Button asChild variant="ghost" size="sm">
+          <nav className="flex items-center gap-1">
+            <Button asChild variant="ghost" size="sm" className="text-slate-300 hover:text-white hover:bg-slate-900/60 rounded-xl transition-all">
               <Link href="/patient/dashboard">Dashboard</Link>
             </Button>
-            <Button asChild variant="ghost" size="sm">
+            <Button asChild variant="ghost" size="sm" className="text-slate-300 hover:text-white hover:bg-slate-900/60 rounded-xl transition-all">
               <Link href="/">Home</Link>
             </Button>
-            <Button asChild variant="ghost" size="sm">
+            <Button asChild variant="ghost" size="sm" className="text-slate-300 hover:text-white hover:bg-slate-900/60 rounded-xl transition-all">
               <Link href="/profile">My Profile</Link>
             </Button>
-            <Button asChild>
+            <Button asChild className="bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl shadow-lg shadow-emerald-600/20 transition-all font-semibold text-xs px-4 py-2">
               <Link href="/consultation/book">Book a Doctor</Link>
             </Button>
           </nav>
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-8">
-        <section className="mb-6 rounded-2xl border bg-gradient-to-br from-primary/10 via-background to-secondary/10 p-6">
-          <p className="text-sm text-muted-foreground">{greeting},</p>
-          <h2 className="text-xl font-semibold tracking-tight">
+      {liveAppointment && (
+        <div className="bg-emerald-955/80 border-b border-emerald-500/30 backdrop-blur-md py-3.5 px-6 sticky top-[81px] z-20 shadow-[0_4px_30px_rgba(16,185,129,0.15)] animate-in fade-in slide-in-from-top duration-300">
+          <div className="container mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-400 animate-ping" />
+              <p className="text-sm font-bold text-white flex items-center gap-2">
+                <span>🚨</span>
+                <span>Dr. {liveAppointment.doctor?.name || liveAppointment.doctor_name || "Assigned Doctor"} is ready for your consultation!</span>
+              </p>
+            </div>
+            <Button asChild size="sm" className="bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl shadow-lg shadow-emerald-500/25 px-5 py-2 animate-pulse text-xs font-bold shrink-0">
+              <Link href={`/consultation/${liveAppointment.id}`}>
+                Join Call Now
+              </Link>
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <main className="container mx-auto px-6 py-8">
+        <section className="mb-8 rounded-3xl border border-slate-900 bg-slate-900/20 backdrop-blur-md p-6 relative overflow-hidden shadow-2xl">
+          <div className="absolute top-0 right-0 w-80 h-80 bg-emerald-500/5 rounded-full blur-3xl -z-10" />
+          <p className="text-xs font-bold tracking-wider text-emerald-400 uppercase">{greeting}</p>
+          <h2 className="text-xl font-extrabold tracking-tight text-white mt-1">
             Here&apos;s your CareBridge health overview
           </h2>
-          <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-xl border bg-background/60 p-4">
-              <p className="text-xs text-muted-foreground">Active Prescriptions</p>
-              <p className="mt-1 text-2xl font-bold tracking-tight">{prescriptions.length}</p>
+          <div className="mt-6 grid gap-4 sm:grid-cols-3">
+            <div className="rounded-2xl border border-slate-800/60 bg-slate-950/40 backdrop-blur-sm p-5 hover:border-slate-700/65 transition-all group relative overflow-hidden shadow-md">
+              <div className="absolute top-0 left-0 w-1.5 h-full bg-emerald-500/40" />
+              <p className="text-xs font-medium text-slate-400">Active Prescriptions</p>
+              <p className="mt-2 text-3xl font-extrabold tracking-tight text-white group-hover:scale-105 transition-transform origin-left">{prescriptions.length}</p>
             </div>
-            <div className="rounded-xl border bg-background/60 p-4">
-              <p className="text-xs text-muted-foreground">Upcoming Appointments</p>
-              <p className="mt-1 text-2xl font-bold tracking-tight">{upcomingCount} Scheduled</p>
+            <div className="rounded-2xl border border-slate-800/60 bg-slate-950/40 backdrop-blur-sm p-5 hover:border-slate-700/65 transition-all group relative overflow-hidden shadow-md">
+              <div className="absolute top-0 left-0 w-1.5 h-full bg-cyan-500/40" />
+              <p className="text-xs font-medium text-slate-400">Upcoming Appointments</p>
+              <p className="mt-2 text-3xl font-extrabold tracking-tight text-white group-hover:scale-105 transition-transform origin-left">{upcomingCount} <span className="text-sm font-medium text-slate-400">Scheduled</span></p>
             </div>
-            <div className="rounded-xl border bg-background/60 p-4">
-              <p className="text-xs text-muted-foreground">Last Visit</p>
-              <p className="mt-1 text-2xl font-bold tracking-tight" suppressHydrationWarning>
+            <div className="rounded-2xl border border-slate-800/60 bg-slate-950/40 backdrop-blur-sm p-5 hover:border-slate-700/65 transition-all group relative overflow-hidden shadow-md">
+              <div className="absolute top-0 left-0 w-1.5 h-full bg-violet-500/40" />
+              <p className="text-xs font-medium text-slate-400">Last Visit</p>
+              <p className="mt-2 text-3xl font-extrabold tracking-tight text-white group-hover:scale-105 transition-transform origin-left" suppressHydrationWarning>
                 {prescriptions[0]
                   ? formatStableDate(prescriptions[0].created_at)
                   : "—"}
@@ -310,43 +360,52 @@ export function PatientDashboardClient({
         </section>
 
         <Tabs defaultValue="records" className="space-y-6">
-          <TabsList className="h-auto w-full justify-start gap-2 bg-muted/30 p-2 sm:w-fit">
-            <TabsTrigger value="records" className="gap-2">
-              <FileText className="size-4" />Medical Records & Prescriptions
+          <TabsList className="h-auto w-full justify-start gap-2 bg-slate-950/60 border border-slate-900/50 p-2 sm:w-fit rounded-2xl backdrop-blur-md shadow-2xl relative">
+            <TabsTrigger 
+              value="records" 
+              className="gap-2 rounded-xl py-2.5 px-4 text-slate-400 transition-all font-semibold text-xs data-[state=active]:bg-slate-900 data-[state=active]:text-emerald-400 data-[state=active]:border-emerald-500/30 data-[state=active]:shadow-[0_0_15px_rgba(16,185,129,0.15)] border border-transparent hover:text-slate-200 hover:border-slate-800/85 hover:bg-slate-900/40"
+            >
+              <FileText className="size-4 text-emerald-400 group-data-[state=active]:animate-pulse" />
+              Medical Records
             </TabsTrigger>
-            <TabsTrigger value="appointments" className="gap-2">
-              <CalendarDays className="size-4" />My Consultations
+            <TabsTrigger 
+              value="appointments" 
+              className="gap-2 rounded-xl py-2.5 px-4 text-slate-400 transition-all font-semibold text-xs data-[state=active]:bg-slate-900 data-[state=active]:text-cyan-400 data-[state=active]:border-cyan-500/30 data-[state=active]:shadow-[0_0_15px_rgba(6,182,212,0.15)] border border-transparent hover:text-slate-200 hover:border-slate-800/85 hover:bg-slate-900/40"
+            >
+              <CalendarDays className="size-4 text-cyan-400 group-data-[state=active]:animate-pulse" />
+              My Consultations
             </TabsTrigger>
-            <TabsTrigger value="care" className="gap-2">
-              <Activity className="size-4" />Find Care
+            <TabsTrigger 
+              value="care" 
+              className="gap-2 rounded-xl py-2.5 px-4 text-slate-400 transition-all font-semibold text-xs data-[state=active]:bg-slate-900 data-[state=active]:text-violet-400 data-[state=active]:border-violet-500/30 data-[state=active]:shadow-[0_0_15px_rgba(139,92,246,0.15)] border border-transparent hover:text-slate-200 hover:border-slate-800/85 hover:bg-slate-900/40"
+            >
+              <Activity className="size-4 text-violet-400 group-data-[state=active]:animate-pulse" />
+              Find Care
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="records" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>My Prescriptions & Records</CardTitle>
-                <CardDescription>
-                  Your latest digital prescriptions are ready for download and pharmacy use.
-                </CardDescription>
-              </CardHeader>
-            </Card>
+          <TabsContent value="records" className="space-y-4 outline-none">
+            <div className="rounded-2xl border border-slate-900 bg-slate-900/20 backdrop-blur-md p-6">
+              <h3 className="text-lg font-bold text-white">My Prescriptions & Records</h3>
+              <p className="text-xs text-slate-400 mt-1">Your latest digital prescriptions are ready for download and pharmacy use.</p>
+            </div>
 
             {loadingPrescriptions ? (
-              <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">
-                Loading prescriptions...
+              <div className="h-32 flex flex-col items-center justify-center text-slate-400 gap-2 animate-pulse bg-slate-900/30 border border-slate-900/80 rounded-2xl">
+                <div className="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+                <span className="text-xs">Loading prescriptions...</span>
               </div>
             ) : prescriptions.length === 0 ? (
-              <div className="flex flex-col items-center rounded-2xl border border-dashed border-border/80 bg-gradient-to-br from-muted/40 via-background to-muted/20 p-10 text-center">
-                <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
-                  <Pill className="h-7 w-7 text-primary" />
+              <div className="flex flex-col items-center rounded-2xl border border-dashed border-slate-800/80 bg-slate-950/20 p-10 text-center">
+                <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/10">
+                  <Pill className="h-7 w-7 text-emerald-450" />
                 </div>
-                <h3 className="text-base font-semibold">No active prescriptions found yet.</h3>
-                <p className="mt-1 max-w-md text-sm text-muted-foreground">
+                <h3 className="text-base font-bold text-white">No active prescriptions found yet.</h3>
+                <p className="mt-1 max-w-sm text-xs text-slate-450">
                   Once your doctor issues one, it will appear here.
                 </p>
                 <div className="mt-6">
-                  <Button asChild className="gap-2">
+                  <Button asChild className="bg-emerald-650 hover:bg-emerald-600 rounded-xl gap-2 text-xs">
                     <Link href="/consultation/book">
                       <CalendarDays className="h-4 w-4" /> Book a consultation
                     </Link>
@@ -356,28 +415,31 @@ export function PatientDashboardClient({
             ) : (
               <div className="space-y-4">
                 {prescriptions.map((prescription) => (
-                  <Card key={prescription.id}>
-                    <CardHeader>
-                      <div className="flex items-start justify-between gap-4">
+                  <Card key={prescription.id} className="bg-slate-900/40 border border-slate-900/80 rounded-2xl hover:border-slate-800 transition-all shadow-lg overflow-hidden">
+                    <CardHeader className="pb-3">
+                      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
                         <div className="flex gap-3">
-                          <Pill className="mt-1 size-5 text-primary" />
+                          <div className="h-10 w-10 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-450 shrink-0">
+                            <Pill className="size-5" />
+                          </div>
                           <div>
-                            <CardTitle className="text-lg">
+                            <CardTitle className="text-base font-bold text-white">
                               {prescription.diagnosis ?? "CareBridge Prescription"}
                             </CardTitle>
-                            <CardDescription suppressHydrationWarning>
+                            <CardDescription className="text-slate-450 text-xs mt-0.5" suppressHydrationWarning>
                               Dr. {prescription.doctor_name || "Rahul Sharma"} &middot;{" "}
                               {formatStableDateTime(prescription.created_at)}
                             </CardDescription>
                           </div>
                         </div>
-                        <Button size="sm" onClick={() => generatePrescriptionPDF(prescription)}>
-                          <Download className="mr-1.5 h-4 w-4" />
-                          Download e-Prescription (PDF)
+                        <Button size="sm" onClick={() => generatePrescriptionPDF(prescription)} className="bg-slate-800 hover:bg-slate-700 border border-slate-750 text-slate-205 rounded-xl shadow-md transition-all self-start sm:self-center text-xs">
+                          <Download className="mr-1.5 h-4 w-4 text-emerald-450" />
+                          Download (PDF)
                         </Button>
                       </div>
                     </CardHeader>
-                    <CardContent className="text-sm text-muted-foreground" suppressHydrationWarning>
+                    <CardContent className="text-xs text-slate-350 bg-slate-950/20 p-4 border-t border-slate-900" suppressHydrationWarning>
+                      <span className="font-semibold text-slate-500 block mb-1 text-[10px] uppercase tracking-wider">Instructions / Advice:</span>
                       {prescription.instructions || prescription.advice || "Follow prescribed dosage"}
                     </CardContent>
                   </Card>
@@ -386,77 +448,66 @@ export function PatientDashboardClient({
             )}
           </TabsContent>
 
-          <TabsContent value="appointments" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>My Consultation Bookings</CardTitle>
-                <CardDescription>
-                  View and manage your upcoming and completed doctor consultation requests.
-                </CardDescription>
-              </CardHeader>
-            </Card>
+          <TabsContent value="appointments" className="space-y-4 outline-none">
+            <div className="rounded-2xl border border-slate-900 bg-slate-900/20 backdrop-blur-md p-6">
+              <h3 className="text-lg font-bold text-white">My Consultation Bookings</h3>
+              <p className="text-xs text-slate-400 mt-1">View and manage your upcoming and completed doctor consultation requests.</p>
+            </div>
 
             <MyConsultationsPanel
-              appointments={appointments}
-              loading={loadingAppointments}
-              onRefresh={refreshAppointments}
+              patientId={patientId}
             />
           </TabsContent>
 
-          <TabsContent value="care" className="grid gap-4 md:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <Activity className="size-6 text-primary" />
-                <CardTitle className="mt-3">AI Symptom Checker</CardTitle>
-                <CardDescription>
-                  Describe how you feel and get structured guidance before your next consultation.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Button asChild className="gap-2">
-                  <Link href="/symptoms">
-                    Start symptom check <ArrowRight />
-                  </Link>
-                </Button>
-              </CardContent>
+          <TabsContent value="care" className="grid gap-6 md:grid-cols-2 outline-none">
+            <Card className="bg-slate-900/40 border border-slate-900/80 rounded-2xl hover:border-slate-800 transition-all p-6 relative overflow-hidden group shadow-lg">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-2xl -z-10 group-hover:bg-emerald-500/10 transition-all" />
+              <div className="h-12 w-12 rounded-xl bg-emerald-500/10 text-emerald-450 flex items-center justify-center mb-4">
+                <Activity className="size-6 animate-pulse" />
+              </div>
+              <CardTitle className="text-lg font-bold text-white">AI Symptom Checker</CardTitle>
+              <CardDescription className="text-xs text-slate-450 mt-1 mb-6">
+                Describe how you feel and get structured guidance before your next consultation.
+              </CardDescription>
+              <Button asChild className="bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl gap-2 w-full justify-center text-xs">
+                <Link href="/symptoms">
+                  Start symptom check <ArrowRight className="w-4 h-4" />
+                </Link>
+              </Button>
             </Card>
 
-            <Card>
-              <CardHeader>
-                <Stethoscope className="size-6 text-secondary" />
-                <CardTitle className="mt-3">Find a Doctor</CardTitle>
-                <CardDescription>
-                  Browse available specialists and book a convenient consultation time.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Button asChild variant="outline" className="gap-2">
-                  <Link href="/consultation/book">
-                    Book consultation <CalendarDays />
-                  </Link>
-                </Button>
-              </CardContent>
+            <Card className="bg-slate-900/40 border border-slate-900/80 rounded-2xl hover:border-slate-805 transition-all p-6 relative overflow-hidden group shadow-lg">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-500/5 rounded-full blur-2xl -z-10 group-hover:bg-cyan-500/10 transition-all" />
+              <div className="h-12 w-12 rounded-xl bg-cyan-500/10 text-cyan-455 flex items-center justify-center mb-4">
+                <Stethoscope className="size-6" />
+              </div>
+              <CardTitle className="text-lg font-bold text-white">Find a Doctor</CardTitle>
+              <CardDescription className="text-xs text-slate-455 mt-1 mb-6">
+                Browse available specialists and book a convenient consultation time.
+              </CardDescription>
+              <Button asChild variant="outline" className="bg-transparent border-slate-800 text-slate-300 hover:bg-slate-900 rounded-xl gap-2 w-full justify-center text-xs">
+                <Link href="/consultation/book">
+                  Book consultation <CalendarDays className="w-4 h-4" />
+                </Link>
+              </Button>
             </Card>
 
-            <Card className="md:col-span-2">
-              <CardHeader>
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <CardTitle className="flex items-center gap-2">
-                      🩺 Recent AI Symptom Assessments & Tracking
-                    </CardTitle>
-                    <CardDescription>
-                      Your recent AI triage analyses, severity levels, and clinical insights.
-                    </CardDescription>
-                  </div>
-                </div>
+            <Card className="md:col-span-2 bg-slate-900/40 border border-slate-900/80 rounded-2xl p-6 shadow-lg overflow-hidden relative">
+              <div className="absolute top-0 right-0 w-64 h-64 bg-violet-500/5 rounded-full blur-3xl -z-10" />
+              <CardHeader className="px-0 pt-0 pb-6 border-b border-slate-900/60">
+                <CardTitle className="flex items-center gap-2 text-base font-bold text-white">
+                  🩺 Recent AI Symptom Assessments & Tracking
+                </CardTitle>
+                <CardDescription className="text-xs text-slate-450 mt-1">
+                  Your recent AI triage analyses, severity levels, and clinical insights.
+                </CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="px-0 pt-6">
                 {symptomLogs.length === 0 ? (
-                  <div className="flex flex-col items-center rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground bg-muted/10">
-                    <Activity className="h-8 w-8 text-muted-foreground/60 mb-2" />
+                  <div className="flex flex-col items-center rounded-xl border border-dashed border-slate-900/85 p-8 text-center text-xs text-slate-450 bg-slate-950/20">
+                    <Activity className="h-8 w-8 text-slate-500 mb-2" />
                     No AI symptom assessments logged yet. Run your first check to get clinical guidance.
-                    <Button asChild className="mt-4 bg-emerald-600 hover:bg-emerald-700 text-white gap-1">
+                    <Button asChild className="mt-4 bg-emerald-600 hover:bg-emerald-750 text-white rounded-xl gap-1">
                       <Link href="/symptoms">
                         Start AI Assessment <ArrowRight className="h-4 w-4" />
                       </Link>
@@ -472,19 +523,24 @@ export function PatientDashboardClient({
                       return (
                         <div
                           key={idx}
-                          className="flex flex-col md:flex-row md:items-center justify-between border rounded-xl p-4 bg-muted/10 gap-4"
+                          className="flex flex-col md:flex-row md:items-center justify-between border border-slate-900 bg-slate-950/30 rounded-xl p-4 gap-4"
                         >
                           <div className="space-y-1">
                             <div className="flex flex-wrap items-center gap-2">
-                              <span className="font-semibold text-foreground">{log.condition || "General Symptoms"}</span>
+                              <span className="font-bold text-white text-sm">{log.condition || "General Symptoms"}</span>
                               <Badge
-                                variant={isEmergency ? "destructive" : isUrgent ? "outline" : "secondary"}
-                                className={isUrgent ? "border-amber-500 text-amber-700" : ""}
+                                className={`rounded-full px-2 py-0.5 text-[9px] font-semibold border ${
+                                  isEmergency 
+                                    ? "bg-rose-955/50 border-rose-500/30 text-rose-400" 
+                                    : isUrgent 
+                                      ? "bg-amber-955/50 border-amber-500/30 text-amber-400" 
+                                      : "bg-slate-800 border-slate-700 text-slate-300"
+                                }`}
                               >
                                 {log.urgency ? log.urgency.charAt(0).toUpperCase() + log.urgency.slice(1) : "Routine"}
                               </Badge>
                             </div>
-                            <p className="text-xs text-muted-foreground">
+                            <p className="text-[10px] text-slate-450">
                               📅 {isNaN(dateObj.getTime()) ? "Unknown Date" : dateObj.toLocaleString("en-US", {
                                 day: "numeric",
                                 month: "short",
@@ -495,16 +551,16 @@ export function PatientDashboardClient({
                               })}
                             </p>
                             {log.primary_concern && (
-                              <p className="text-xs text-foreground/80 mt-1">
-                                <span className="font-medium text-muted-foreground">Primary Concern:</span> {log.primary_concern}
+                              <p className="text-xs text-slate-300 mt-1.5">
+                                <span className="font-medium text-slate-500">Primary Concern:</span> {log.primary_concern}
                               </p>
                             )}
-                            <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
+                            <p className="text-xs text-slate-400 line-clamp-2 mt-1 bg-slate-955/40 p-2 rounded-lg border border-slate-900/50">
                               {log.description || "No recommendations logged."}
                             </p>
                           </div>
                           
-                          <Button asChild size="sm" variant="outline" className="shrink-0 gap-1.5 self-start md:self-center">
+                          <Button asChild size="sm" variant="outline" className="shrink-0 bg-transparent border-slate-800 text-slate-300 hover:bg-slate-800 rounded-xl self-start md:self-center text-xs">
                             <Link href="/symptoms">
                               Run New Check
                             </Link>

@@ -290,12 +290,21 @@ export function DoctorDashboardClient({
                                 Leave / Unavailable
                               </Badge>
                             ) : (
-                              <div className="flex flex-wrap gap-1 mt-1.5">
-                                {item.slots && item.slots.map((slot: string) => (
-                                  <Badge key={slot} variant="outline" className="text-[10px] bg-slate-800 text-slate-200 border-slate-700">
-                                    {slot}
-                                  </Badge>
-                                ))}
+                              <div className="flex flex-wrap gap-1.5 mt-2">
+                                {item.slots && item.slots.map((slot: string) => {
+                                  let displaySlot = slot;
+                                  if (slot.includes('T') || (slot.includes('-') && slot.includes(':'))) {
+                                    const d = new Date(slot);
+                                    if (!isNaN(d.getTime())) {
+                                      displaySlot = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                                    }
+                                  }
+                                  return (
+                                    <span key={slot} className="text-xs font-semibold px-3 py-1.5 bg-slate-800 text-emerald-400 border border-slate-700 rounded-lg inline-block">
+                                      {displaySlot}
+                                    </span>
+                                  );
+                                })}
                               </div>
                             )}
                             {item.updated_at && (

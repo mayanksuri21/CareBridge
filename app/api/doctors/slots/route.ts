@@ -1,12 +1,24 @@
 import { NextResponse, NextRequest } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 
-type ScheduleItem = {
-  schedule_type: 'recurring' | 'specific_date' | 'leave'
-  day_of_week?: number // 0 (Sunday) to 6 (Saturday)
-  specific_date?: string // 'YYYY-MM-DD'
-  slots: string[]
-  is_leave?: boolean
+function parseDateSafely(dateStr: string): Date | null {
+  if (!dateStr) return null;
+  let dateObj: Date;
+  
+  if (dateStr.includes('-')) {
+    const parts = dateStr.split('-');
+    if (parts[0].length === 4) {
+      // YYYY-MM-DD
+      dateObj = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    } else {
+      // DD-MM-YYYY
+      dateObj = new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
+    }
+  } else {
+    dateObj = new Date(dateStr);
+  }
+  
+  return isNaN(dateObj.getTime()) ? null : dateObj;
 }
 
 export async function GET(request: NextRequest) {
@@ -28,6 +40,15 @@ export async function GET(request: NextRequest) {
     if (!doctorId || !date) {
       return NextResponse.json({ error: "Missing doctorId or date" }, { status: 400 })
     }
+
+    const dateObj = parseDateSafely(date);
+    if (!dateObj) {
+      return NextResponse.json({ error: "Invalid date format" }, { status: 400 })
+    }
+
+    const dayOfWeek = dateObj.getDay(); // 0 (Sunday) to 6 (Saturday)
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const dayName = days[dayOfWeek];
 
     // Query profiles which contains the doctor's serialized schedule
     const { data: profile, error: profileErr } = await supabase
@@ -55,64 +76,64 @@ export async function GET(request: NextRequest) {
       config = []
     }
 
-    // Check if new presets structure is used:
-    const newPreset = config.find((item: any) => item && item.interval !== undefined);
-    if (newPreset) {
-      const [year, month, day] = date.split('-').map(Number)
-      const dateObj = new Date(Date.UTC(year, month - 1, day))
-      const dayOfWeek = dateObj.getUTCDay() // 0 to 6
-      const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' }) // "Monday", etc.
+    // 1. Check for explicit leave (new preset or legacy structure)
+    const isExplicitLeave = config.some((item: any) => {
+      if (!item) return false;
+      // New presets structure leave check
+      if (item.interval === date && (!item.slots || item.slots.length === 0)) return true;
+      // Legacy structure leave check
+      if (item.schedule_type === 'leave' && item.specific_date === date && item.is_leave === true) return true;
+      return false;
+    });
 
-      // Check if it's a specific date override first
-      const specificMatch = config.find((item: any) => item.interval === date);
-      if (specificMatch) {
-        if (specificMatch.slots.length === 0) {
-          return NextResponse.json({ isLeave: true, slots: [], message: "Doctor is on leave on this date." })
-        }
-        return NextResponse.json({ isLeave: false, slots: specificMatch.slots });
-      }
+    if (isExplicitLeave) {
+      return NextResponse.json({ isLeave: true, slots: [], message: "Doctor is on leave on this date." })
+    }
 
-      // Check if dayOfWeek matches the interval
-      const match = config.find((item: any) => {
+    // 2. Check for specific date slot overrides
+    const specificOverride = config.find((item: any) => {
+      if (!item) return false;
+      if (item.interval === date && item.slots && item.slots.length > 0) return true;
+      if (item.schedule_type === 'specific_date' && item.specific_date === date && item.slots && item.slots.length > 0) return true;
+      return false;
+    });
+
+    if (specificOverride) {
+      return NextResponse.json({ isLeave: false, slots: specificOverride.slots });
+    }
+
+    // 3. Check for day of week preset in config (recurring or intervals like "Monday to Friday")
+    const matchingPreset = config.find((item: any) => {
+      if (!item) return false;
+      
+      // New presets structure interval check
+      if (item.interval) {
         const intervalLower = item.interval.toLowerCase();
         if (intervalLower === "every day" || intervalLower === "everyday") return true;
         if (intervalLower === "monday to friday") {
           return dayOfWeek >= 1 && dayOfWeek <= 5;
         }
         return intervalLower.includes(dayName.toLowerCase());
-      });
-
-      if (match) {
-        return NextResponse.json({ isLeave: false, slots: match.slots });
       }
-      return NextResponse.json({ isLeave: false, slots: [] });
+
+      // Legacy structure day of week check
+      if (item.schedule_type === 'recurring' && item.day_of_week === dayOfWeek) {
+        return true;
+      }
+
+      return false;
+    });
+
+    if (matchingPreset && matchingPreset.slots && matchingPreset.slots.length > 0) {
+      return NextResponse.json({ isLeave: false, slots: matchingPreset.slots });
     }
 
-    // Rule 1: Check for explicit Leave record on date (legacy)
-    const leaveRecord = config.find(
-      (item) => item.schedule_type === 'leave' && item.specific_date === date && item.is_leave === true
-    )
-    if (leaveRecord) {
-      return NextResponse.json({ isLeave: true, slots: [], message: "Doctor is on leave on this date." })
-    }
-
-    // Rule 2: Check for explicit date override with slots for that date (legacy)
-    const dateOverride = config.find(
-      (item) => item.schedule_type === 'specific_date' && item.specific_date === date
-    )
-    if (dateOverride) {
-      return NextResponse.json({ isLeave: false, slots: dateOverride.slots })
-    }
-
-    // Rule 3: Fallback to recurring day of week preset (legacy)
-    const [year, month, day] = date.split('-').map(Number)
-    const dayOfWeek = new Date(Date.UTC(year, month - 1, day)).getUTCDay()
-
-    const recurringPreset = config.find(
-      (item) => item.schedule_type === 'recurring' && item.day_of_week === dayOfWeek
-    )
-    if (recurringPreset) {
-      return NextResponse.json({ isLeave: false, slots: recurringPreset.slots })
+    // 4. Default template match: Monday to Friday standard clinical hours
+    if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+      const DEFAULT_WEEKDAY_SLOTS = [
+        "09:00 AM", "10:30 AM", "12:00 PM", "02:30 PM", "04:00 PM", "05:30 PM", "07:00 PM"
+      ];
+      return NextResponse.json({ isLeave: false, slots: DEFAULT_WEEKDAY_SLOTS });
     }
 
     // Default: No configurations exist

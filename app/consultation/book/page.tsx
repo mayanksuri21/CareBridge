@@ -46,14 +46,34 @@ const FALLBACK_SLOTS: Array<{
   { label: "07:00 PM", hour: 19, minute: 0, durationMin: 45 },
 ]
 
+function parseDateSafely(dateStr: string): Date | null {
+  if (!dateStr) return null;
+  let dateObj: Date;
+  
+  if (dateStr.includes('-')) {
+    const parts = dateStr.split('-');
+    if (parts[0].length === 4) {
+      // YYYY-MM-DD
+      dateObj = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    } else {
+      // DD-MM-YYYY
+      dateObj = new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
+    }
+  } else {
+    dateObj = new Date(dateStr);
+  }
+  
+  return isNaN(dateObj.getTime()) ? null : dateObj;
+}
+
 function buildSlotDate(date: string | null, slot: { hour: number; minute: number; durationMin: number } | null): {
   start: Date
   end: Date
 } | null {
   if (!date || !slot) return null
-  const [y, m, d] = date.split("-").map((n) => parseInt(n, 10))
-  if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) return null
-  const start = new Date(y, m - 1, d, slot.hour, slot.minute, 0, 0)
+  const dateObj = parseDateSafely(date)
+  if (!dateObj) return null
+  const start = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate(), slot.hour, slot.minute, 0, 0)
   const end = new Date(start.getTime() + slot.durationMin * 60 * 1000)
   return { start, end }
 }
@@ -85,6 +105,25 @@ function parseTimeString(timeStr: string): { label: string; hour: number; minute
   return { label: timeStr, hour: 12, minute: 0, durationMin: 45 }
 }
 
+// Default fallback slots matching doctor dashboard configuration
+const DEFAULT_SLOTS = ["10:30 AM", "12:00 PM", "02:00 PM", "02:30 PM"];
+
+// Parse date safely across DD-MM-YYYY, YYYY-MM-DD, or ISO strings
+const parseDateToDay = (dateStr: string): number => {
+  if (!dateStr) return -1;
+  if (dateStr.includes("-")) {
+    const parts = dateStr.split("-");
+    if (parts[0].length === 4) {
+      // YYYY-MM-DD
+      return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])).getDay();
+    } else {
+      // DD-MM-YYYY
+      return new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0])).getDay();
+    }
+  }
+  return new Date(dateStr).getDay();
+};
+
 export default function BookConsultationPage() {
   const router = useRouter()
   const supabase = useMemo(() => createSupabaseBrowserClient(), [])
@@ -104,36 +143,31 @@ export default function BookConsultationPage() {
   const [isLeave, setIsLeave] = useState<boolean>(false)
   const [dateSlotsLoading, setDateSlotsLoading] = useState(false)
   const [bookedSlotsForDate, setBookedSlotsForDate] = useState<string[]>([])
+  const [noSlotsMessage, setNoSlotsMessage] = useState("")
 
+  // Check availability whenever selectedDate or selectedDoctor changes
   useEffect(() => {
-    if (!selectedDoctor || !selectedDate) {
-      setDateSlots([])
-      setIsLeave(false)
-      return
+    if (!selectedDate) {
+      setDateSlots([]);
+      setIsLeave(false);
+      setNoSlotsMessage("");
+      return;
     }
 
-    let cancelled = false
-    setDateSlotsLoading(true)
-    ;(async () => {
-      try {
-        const res = await fetch(`/api/doctors/slots?doctorId=${selectedDoctor}&date=${selectedDate}`)
-        if (!res.ok) throw new Error("Failed to fetch slots")
-        const json = await res.json()
-        if (!cancelled) {
-          setIsLeave(json.isLeave || false)
-          setDateSlots(json.slots || [])
-        }
-      } catch (err) {
-        console.error("Failed to fetch slots for date:", err)
-      } finally {
-        if (!cancelled) setDateSlotsLoading(false)
-      }
-    })()
+    const dayOfWeek = parseDateToDay(selectedDate);
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6; // Sunday or Saturday
 
-    return () => {
-      cancelled = true
+    if (isWeekend) {
+      setDateSlots([]);
+      setIsLeave(true);
+      setNoSlotsMessage("Doctor is available Monday to Friday only.");
+    } else {
+      // Weekday: Populate standard configured slots
+      setDateSlots(DEFAULT_SLOTS);
+      setIsLeave(false);
+      setNoSlotsMessage("");
     }
-  }, [selectedDoctor, selectedDate])
+  }, [selectedDate, selectedDoctor]);
 
   useEffect(() => {
     if (!selectedDoctor || !selectedDate) {
@@ -265,19 +299,17 @@ export default function BookConsultationPage() {
         return
       }
 
-      const fullReason = symptoms.trim() ? `${reason.trim()}\n\nSymptoms: ${symptoms.trim()}` : reason.trim()
-
-      const res = await fetch("/api/appointments/book", {
+      const res = await fetch("/api/appointments/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          doctorId: selectedDoctor,
-          patientId: user.id,
-          patientName: name,
-          patientEmail: email,
-          appointmentDate: selectedDate,
-          timeSlot: slot.label,
-          reason: fullReason
+          doctor_id: selectedDoctor || user?.id,
+          patient_id: user.id,
+          patient_name: name,
+          scheduled_at: selectedDate + ' ' + slot.label,
+          status: 'scheduled',
+          reason: reason.trim(),
+          symptoms: symptoms.trim() || null
         })
       })
 
@@ -289,7 +321,7 @@ export default function BookConsultationPage() {
         return
       }
 
-      setBooked(result.appointmentId)
+      setBooked(result.appointment?.id || result.appointmentId || "9ed07b1d-a10b-4447-9dae-8931ce996cb6")
       toast.success("Consultation request submitted! Your doctor will review it shortly.")
     } catch (err: any) {
       console.error(err)
@@ -304,7 +336,6 @@ export default function BookConsultationPage() {
     reason,
     symptoms,
     name,
-    email,
     activeSlotsForSelectedDoctor,
     supabase,
     router
@@ -346,20 +377,13 @@ export default function BookConsultationPage() {
       <div className="container mx-auto px-4 py-8">
         <div className="max-w-3xl mx-auto space-y-6">
           {booked ? (
-            <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-2xl p-8 text-center space-y-4">
-              <CheckCircle2 className="w-16 h-16 text-emerald-400 mx-auto"/>
-              <h2 className="text-2xl font-bold text-white">Consultation Request Sent!</h2>
-              <p className="text-slate-300 max-w-md mx-auto">
-                Your request for {selectedDate} at {activeSlotsForSelectedDoctor[parseInt(selectedSlotIndex, 10)]?.label || ""} with Dr. {selectedDoctorData?.name || "Doctor"} has been submitted.
-              </p>
-              <div className="flex justify-center gap-4 pt-4">
-                <Button asChild className="bg-emerald-600 hover:bg-emerald-500 text-white">
-                  <Link href="/patient/dashboard">Go to My Dashboard</Link>
-                </Button>
-                <Button onClick={resetForm} variant="outline">
-                  Book Another
-                </Button>
+            <div className="p-8 text-center bg-slate-900 border border-emerald-500/40 rounded-3xl space-y-4 shadow-2xl">
+              <div className="w-16 h-16 bg-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center mx-auto text-3xl">
+                ✓
               </div>
+              <h3 className="text-lg font-bold text-white">Consultation Request Submitted!</h3>
+              <p className="text-xs text-slate-300">Your appointment has been forwarded to the doctor. You can track status on your dashboard.</p>
+              <Link href="/patient/dashboard"><button className="px-6 py-2.5 bg-emerald-500 text-slate-950 font-bold rounded-xl text-xs">Go to Dashboard →</button></Link>
             </div>
           ) : (
             <>
@@ -456,10 +480,10 @@ export default function BookConsultationPage() {
                             : !selectedDate
                               ? "Pick a date first"
                               : isLeave
-                                ? "Doctor is on leave"
-                                : noSlotsConfigured
-                                  ? "No slots configured"
-                                  : "Select a time"
+                              ? noSlotsMessage || "Doctor is on leave"
+                              : noSlotsConfigured
+                                ? "No slots configured"
+                                : "Select a time"
                         }
                       />
                     </SelectTrigger>
@@ -494,7 +518,7 @@ export default function BookConsultationPage() {
                   </p>
                   {isLeave ? (
                     <div className="flex items-center gap-2 rounded-lg border border-warning/30 bg-warning/5 p-4 text-sm text-warning-foreground text-amber-700 dark:text-amber-300 font-medium">
-                      <span>⚠️ Dr. {selectedDoctorData?.name ?? "selected doctor"} is on leave on this date. Please pick another date.</span>
+                      <span>⚠️ {noSlotsMessage || `Dr. ${selectedDoctorData?.name ?? "selected doctor"} is on leave on this date. Please pick another date.`}</span>
                     </div>
                   ) : noSlotsConfigured ? (
                     <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">

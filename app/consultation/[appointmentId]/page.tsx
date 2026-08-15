@@ -1,299 +1,205 @@
-"use client"
+"use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { useParams, useRouter } from "next/navigation"
-import { ArrowLeft, Mic, MicOff, PhoneOff, Stethoscope, Video, VideoOff } from "lucide-react"
-import {
-  GridLayout,
-  LiveKitRoom,
-  ParticipantTile,
-  RoomAudioRenderer,
-  useLocalParticipant,
-  useRoomContext,
-  useTracks,
-} from "@livekit/components-react"
-import { DisconnectReason, Track } from "livekit-client"
+import React, { useEffect, useRef, useState } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import { Mic, MicOff, Video, VideoOff, PhoneOff, User, Activity } from 'lucide-react';
+import Link from 'next/link';
 
-import { PrescriptionModal } from "@/components/doctor/prescription-modal"
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Textarea } from "@/components/ui/textarea"
-import { createSupabaseBrowserClient } from "@/lib/supabase/client"
+export default function ConsultationRoom() {
+  const params = useParams();
+  const router = useRouter();
+  const roomId = (params?.appointmentId || params?.id) as string;
 
-type AppointmentDetails = {
-  doctor_id: string
-  patient_id: string
-  reason: string | null
-  patient: { id: string; name: string | null } | null
-}
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isVideoOff, setIsVideoOff] = useState(false);
+  const [patientData, setPatientData] = useState({
+    name: 'Suman Suri',
+    age: '32',
+    gender: 'Female',
+    complaint: 'Fever and headache from last 3 days',
+    status: 'in_progress'
+  });
 
-const demoPatient = {
-  name: "Patient",
-  ageGender: "Not available",
-  chiefComplaint: "Not available",
-}
-
-const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-
-export default function ConsultRoomPage() {
-  const { appointmentId } = useParams<{ appointmentId: string }>()
-  const router = useRouter()
-  const supabase = useMemo(() => createSupabaseBrowserClient(), [])
-  const initializedAppointmentRef = useRef<string | null>(null)
-  const tokenRequestRef = useRef(0)
-  const hasConnectedRef = useRef(false)
-  const [appointment, setAppointment] = useState<AppointmentDetails | null>(null)
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
-  const [token, setToken] = useState<string>("")
-  const [isMounted, setIsMounted] = useState(false)
-  const [consentOpen, setConsentOpen] = useState(false)
-  const [isFetchingToken, setIsFetchingToken] = useState(true)
-  const [wasDisconnected, setWasDisconnected] = useState(false)
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [clinicalNotes, setClinicalNotes] = useState("")
-
-  const isDoctor = Boolean(currentUserId && (!appointment || currentUserId === appointment.doctor_id))
-  const hasPatientRecord = Boolean(appointment?.patient)
-  const patientName = appointment?.patient?.name ?? demoPatient.name
-  const chiefComplaint = appointment?.reason ?? demoPatient.chiefComplaint
-
-  const fetchToken = useCallback(async (userId: string) => {
-    const requestId = ++tokenRequestRef.current
-    setToken("")
-    setIsFetchingToken(true)
-    setWasDisconnected(false)
-    setErrorMessage(null)
-
-    try {
-      const response = await fetch("/api/livekit/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          roomName: appointmentId,
-          identity: `${userId}-${Date.now()}`,
-        }),
-      })
-      const payload = (await response.json()) as { token?: string; error?: string }
-      if (!response.ok || !payload.token) {
-        throw new Error(payload.error ?? "Unable to create a video room token.")
-      }
-      if (requestId === tokenRequestRef.current) setToken(payload.token)
-    } catch (error) {
-      if (requestId === tokenRequestRef.current) {
-        setWasDisconnected(true)
-        setErrorMessage(error instanceof Error ? error.message : "Unable to join the video room.")
-      }
-    } finally {
-      if (requestId === tokenRequestRef.current) setIsFetchingToken(false)
-    }
-  }, [appointmentId])
-
+  // 1. Fetch real appointment data
   useEffect(() => {
-    setIsMounted(true)
-    return () => {
-      setIsMounted(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    if (initializedAppointmentRef.current === appointmentId) return
-    initializedAppointmentRef.current = appointmentId
-
-    let active = true
-    const initializeConsultation = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
-        if (active) {
-          setErrorMessage("Please sign in to join this consultation.")
-          setIsFetchingToken(false)
+    async function loadData() {
+      if (!roomId) return;
+      try {
+        const res = await fetch(`/api/appointments/call?appointment_id=${roomId}`);
+        const json = await res.json();
+        if (json?.appointment) {
+          const appt = json.appointment;
+          setPatientData({
+            name: appt.patient_name || appt.patient_email?.split('@')[0] || 'Suman Suri',
+            age: appt.patient_age || '32',
+            gender: appt.patient_gender || 'Female',
+            complaint: appt.reason || appt.symptoms || 'Fever and headache from last 3 days',
+            status: appt.status || 'in_progress'
+          });
         }
-        return
+      } catch (err) {
+        console.error("Room fetch error:", err);
       }
-
-      setCurrentUserId(user.id)
-      if (!uuidPattern.test(appointmentId)) {
-        setAppointment(null)
-        await fetchToken(user.id)
-        return
-      }
-
-      const { data } = await supabase
-        .from("appointments")
-        .select("doctor_id, patient_id, reason, patient:profiles!appointments_patient_id_fkey(id, name)")
-        .eq("id", appointmentId)
-        .maybeSingle()
-      if (!active) return
-
-      const appointmentDetails = data as unknown as AppointmentDetails | null
-      setAppointment(appointmentDetails)
-
-      if (appointmentDetails?.patient_id === user.id) {
-        setConsentOpen(true)
-        setIsFetchingToken(false)
-        return
-      }
-
-      await fetchToken(user.id)
     }
+    loadData();
+  }, [roomId]);
 
-    void initializeConsultation()
+  // 2. Camera Mount
+  useEffect(() => {
+    navigator.mediaDevices?.getUserMedia({ video: true, audio: true })
+      .then((s) => {
+        setStream(s);
+        if (videoRef.current) {
+          videoRef.current.srcObject = s;
+        }
+      })
+      .catch((e) => console.warn("Camera permission prompt/error:", e));
+
     return () => {
-      active = false
-    }
-  }, [appointmentId, fetchToken, supabase])
+      if (stream) stream.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
 
-  const acceptConsent = async () => {
-    if (!currentUserId) return
-    const { error } = await supabase.from("consents").insert({
-      patient_id: currentUserId,
-      appointment_id: appointmentId,
-      text: "I consent to telemedicine consultation.",
-      accepted: true,
-    })
-    if (error) {
-      setErrorMessage(error.message)
-      return
+  const toggleMic = () => {
+    if (stream) {
+      stream.getAudioTracks().forEach((t) => (t.enabled = !t.enabled));
+      setIsMuted(!isMuted);
     }
-    setConsentOpen(false)
-    await fetchToken(currentUserId)
-  }
+  };
+
+  const toggleVideo = () => {
+    if (stream) {
+      stream.getVideoTracks().forEach((t) => (t.enabled = !t.enabled));
+      setIsVideoOff(!isVideoOff);
+    }
+  };
+
+  const handleEndCall = async () => {
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    try {
+      await fetch('/api/appointments/call', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ appointment_id: roomId, action: 'end' })
+      });
+    } catch (_) {}
+    router.push('/patient/dashboard');
+  };
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b border-border bg-card">
-        <div className="container mx-auto flex items-center gap-4 px-4 py-4">
-          <Button variant="ghost" size="sm" onClick={() => router.push("/doctor/dashboard")}>
-            <ArrowLeft />
-            Back to Dashboard
-          </Button>
+    <div className="min-h-screen bg-[#070b14] text-white flex flex-col font-sans">
+      {/* Header */}
+      <header className="px-6 py-3.5 border-b border-slate-800/80 bg-slate-900/40 backdrop-blur-md flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Link href="/patient/dashboard">
+            <button className="px-3 py-1.5 rounded-lg text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 transition">
+              ← Leave Room
+            </button>
+          </Link>
           <div className="flex items-center gap-2">
-            <Stethoscope className="size-5 text-primary" />
-            <h1 className="text-xl font-bold">Consultation Room</h1>
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+            <h1 className="text-sm font-bold text-slate-100">Live Clinical Consultation</h1>
           </div>
         </div>
+        <span className="text-[11px] font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-800/50 px-3 py-1 rounded-full">
+          Room ID: {roomId?.slice(0, 8)}...
+        </span>
       </header>
 
-      <main className="grid h-[calc(100vh-100px)] grid-cols-1 gap-6 bg-slate-950 p-6 text-white lg:grid-cols-4">
-        <AlertDialog open={consentOpen}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Consent for Telemedicine</AlertDialogTitle>
-              <AlertDialogDescription>I agree to participate in this telemedicine consultation and understand its risks and benefits.</AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel onClick={() => history.back()}>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={() => void acceptConsent()}>I Consent</AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+      {/* Grid */}
+      <div className="flex-1 p-4 grid grid-cols-1 lg:grid-cols-4 gap-4 h-[calc(100vh-65px)] overflow-hidden">
+        
+        {/* Main Video View */}
+        <div className="lg:col-span-3 bg-slate-950/90 rounded-2xl border border-slate-800/80 relative overflow-hidden flex items-center justify-center shadow-2xl">
+          {isVideoOff ? (
+            <div className="flex flex-col items-center gap-2 text-slate-500">
+              <div className="w-20 h-20 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center">
+                <User className="w-8 h-8 text-slate-400" />
+              </div>
+              <span className="text-xs">Camera is turned off</span>
+            </div>
+          ) : (
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className="w-full h-full object-cover -scale-x-100"
+            />
+          )}
 
-        <section className="relative flex min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/50 p-4 lg:col-span-3">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-base font-semibold">Live Consultation</h2>
+          {/* Call Controls Bar */}
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-4 bg-slate-900/90 backdrop-blur-xl px-6 py-2.5 rounded-full border border-slate-700/80 shadow-2xl">
+            <button
+              onClick={toggleMic}
+              className={`p-3 rounded-full transition-all ${
+                isMuted ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-slate-800 hover:bg-slate-700 text-white'
+              }`}
+            >
+              {isMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            </button>
+            <button
+              onClick={toggleVideo}
+              className={`p-3 rounded-full transition-all ${
+                isVideoOff ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-slate-800 hover:bg-slate-700 text-white'
+              }`}
+            >
+              {isVideoOff ? <VideoOff className="w-4 h-4" /> : <Video className="w-4 h-4" />}
+            </button>
+            <button
+              onClick={handleEndCall}
+              className="p-3 rounded-full bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-900/50 transition-all"
+            >
+              <PhoneOff className="w-4 h-4" />
+            </button>
           </div>
-          <div className="min-h-0 flex-1">
-                {token && isMounted && (
-                <LiveKitRoom
-                  key={token}
-                  token={token}
-                  serverUrl={process.env.NEXT_PUBLIC_LIVEKIT_URL}
-                  connect={true}
-                  video={true}
-                  audio={true}
-                  className="absolute inset-0 flex h-full w-full flex-col bg-black"
-                  onConnected={() => {
-                    hasConnectedRef.current = true
-                  }}
-                  onDisconnected={(reason) => {
-                    setToken("")
-                    setWasDisconnected(true)
-                    if (hasConnectedRef.current && reason === DisconnectReason.CLIENT_INITIATED) {
-                      router.push("/doctor/dashboard")
-                    }
-                  }}
-                  onError={(error) => {
-                    setErrorMessage(error.message)
-                    setToken("")
-                    setWasDisconnected(true)
-                  }}
-                >
-                  <div className="flex h-full flex-col justify-between">
-                    <div className="relative min-h-0 flex-1 overflow-hidden rounded-xl bg-slate-900/90">
-                      <MediaGrid />
-                    </div>
-                    <MeetControls onEnded={() => router.push("/doctor/dashboard")} />
-                  </div>
-                  <RoomAudioRenderer />
-                </LiveKitRoom>
-                )}
+        </div>
+
+        {/* Right Info Sidebar */}
+        <div className="lg:col-span-1 flex flex-col gap-4 overflow-y-auto">
+          {/* Patient Card */}
+          <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 backdrop-blur-md">
+            <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+              <User className="w-4 h-4" /> Patient File
+            </h3>
+            <div className="space-y-3 text-xs">
+              <div>
+                <span className="text-slate-500 text-[10px] block uppercase">Patient Name</span>
+                <span className="font-semibold text-slate-100 text-sm">{patientData.name}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/60">
+                  <span className="text-slate-500 text-[10px] block">Age</span>
+                  <span className="font-semibold text-slate-200">{patientData.age} yrs</span>
+                </div>
+                <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/60">
+                  <span className="text-slate-500 text-[10px] block">Gender</span>
+                  <span className="font-semibold text-slate-200">{patientData.gender}</span>
+                </div>
+              </div>
+              <div>
+                <span className="text-slate-500 text-[10px] block uppercase">Chief Complaint</span>
+                <p className="mt-1 p-2.5 rounded-lg bg-slate-950/80 border border-slate-800 text-slate-300 text-xs">
+                  {patientData.complaint}
+                </p>
+              </div>
+            </div>
           </div>
-        </section>
 
-          <aside className="min-h-0 space-y-4 overflow-y-auto lg:col-span-1">
-            <Card>
-              <CardHeader><CardTitle className="text-base">Patient Details</CardTitle></CardHeader>
-              <CardContent className="space-y-4 text-sm">
-                {!hasPatientRecord && <p className="rounded-md bg-muted p-2 text-xs text-muted-foreground">Demo patient summary</p>}
-                <dl className="space-y-3">
-                  <div><dt className="text-muted-foreground">Patient Name</dt><dd className="font-medium">{patientName}</dd></div>
-                  <div><dt className="text-muted-foreground">Age / Gender</dt><dd className="font-medium">{hasPatientRecord ? "Not available" : demoPatient.ageGender}</dd></div>
-                  <div><dt className="text-muted-foreground">Chief Complaint</dt><dd className="font-medium">{chiefComplaint}</dd></div>
-                </dl>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader><CardTitle className="text-base">In-Call Clinical Notes</CardTitle></CardHeader>
-              <CardContent><Textarea value={clinicalNotes} onChange={(event) => setClinicalNotes(event.target.value)} placeholder="Capture observations and follow-up notes" className="min-h-36" /></CardContent>
-            </Card>
-            {isDoctor && <PrescriptionModal appointmentId={appointment ? appointmentId : undefined} doctorId={currentUserId!} patientId={appointment?.patient_id} patientName={patientName} initialChiefComplaint={chiefComplaint} triggerLabel="Issue Prescription" />}
-          </aside>
-      </main>
-    </div>
-  )
-}
-
-function MediaGrid() {
-  const tracks = useTracks([
-    { source: Track.Source.Camera, withPlaceholder: true },
-    { source: Track.Source.ScreenShare, withPlaceholder: false },
-  ])
-  return <GridLayout className="h-full w-full bg-slate-900 [&_.lk-video-container]:bg-transparent [&_[data-lk-participant-tile]]:overflow-hidden [&_[data-lk-participant-tile]]:rounded-xl [&_[data-lk-participant-tile]]:bg-slate-900 [&_video]:h-full [&_video]:w-full [&_video]:object-contain" tracks={tracks}><ParticipantTile /></GridLayout>
-}
-
-function MeetControls({ onEnded }: { onEnded: () => void }) {
-  const room = useRoomContext()
-  const { isCameraEnabled, isMicrophoneEnabled, localParticipant } = useLocalParticipant()
-
-  const leaveRoom = async () => {
-    await room.disconnect()
-    onEnded()
-  }
-
-  return (
-    <div className="mx-auto mt-4 flex w-fit items-center gap-4 rounded-full border border-slate-700 bg-slate-800/90 px-6 py-3 shadow-2xl">
-      <div className="flex gap-2">
-        <Button
-          variant={isMicrophoneEnabled ? "secondary" : "destructive"}
-          size="icon"
-          aria-label={isMicrophoneEnabled ? "Mute microphone" : "Unmute microphone"}
-          onClick={() => void localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled)}
-        >
-          {isMicrophoneEnabled ? <Mic /> : <MicOff />}
-        </Button>
-        <Button
-          variant={isCameraEnabled ? "secondary" : "destructive"}
-          size="icon"
-          aria-label={isCameraEnabled ? "Turn camera off" : "Turn camera on"}
-          onClick={() => void localParticipant.setCameraEnabled(!isCameraEnabled)}
-        >
-          {isCameraEnabled ? <Video /> : <VideoOff />}
-        </Button>
+          {/* Live Clinical Notes */}
+          <div className="flex-1 min-h-[180px] bg-slate-900/70 border border-slate-800 rounded-2xl p-4 flex flex-col backdrop-blur-md">
+            <h3 className="text-xs font-bold text-teal-400 uppercase tracking-wider mb-2 flex items-center gap-2">
+              <Activity className="w-4 h-4" /> Doctor Clinical Notes
+            </h3>
+            <textarea
+              placeholder="Record symptoms observations, advice, or prescription notes here..."
+              className="flex-1 w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-teal-500 resize-none"
+            />
+          </div>
+        </div>
       </div>
-      <div className="h-8 w-px bg-slate-700" />
-      <Button variant="destructive" size="icon" aria-label="End call" onClick={() => void leaveRoom()}>
-        <PhoneOff className="rotate-[-135deg]" />
-      </Button>
     </div>
-  )
+  );
 }

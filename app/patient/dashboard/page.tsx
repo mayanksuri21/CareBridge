@@ -114,7 +114,7 @@ export default async function PatientDashboardPage() {
     .from("appointments")
     .select("id, doctor_id, slot_id, status, reason, created_at")
     .eq("patient_id", user.id)
-    .in("status", ["scheduled", "pending", "booked", "confirmed", "declined", "cancelled"])
+    .in("status", ["scheduled", "pending", "booked", "confirmed", "declined", "cancelled", "in_progress"])
     .order("created_at", { ascending: false })
 
   let initialApptsMapped: any[] = []
