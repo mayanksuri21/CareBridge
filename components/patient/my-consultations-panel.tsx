@@ -20,7 +20,13 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
         }
         // ONLY show active/scheduled appointments (exclude completed)
         const activeOnly = list.filter(
-          (a: any) => a.status === 'scheduled' || a.status === 'in_progress'
+          (a: any) =>
+            a.status === 'scheduled' ||
+            a.status === 'booked' ||
+            a.status === 'doctor_in_room' ||
+            a.status === 'patient_waiting' ||
+            a.status === 'patient_admitted' ||
+            a.status === 'in_progress'
         );
         setAppointments(activeOnly);
       } else {
@@ -43,7 +49,13 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
     return <div className="text-slate-500 text-xs py-8 text-center animate-pulse">Loading consultations...</div>;
   }
 
-  const activeLiveAppt = appointments.find((a) => a.status === 'in_progress' || a.call_active);
+  const activeLiveAppt = appointments.find((a) =>
+    a.status === 'doctor_in_room' ||
+    a.status === 'patient_waiting' ||
+    a.status === 'patient_admitted' ||
+    a.status === 'in_progress' ||
+    a.call_active
+  );
 
   return (
     <div className="space-y-4">
@@ -78,7 +90,12 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
       ) : (
         <div className="space-y-3">
           {appointments.map((appt) => {
-            const isLive = appt.status === 'in_progress' || appt.call_active;
+            const isLive =
+              appt.status === 'doctor_in_room' ||
+              appt.status === 'patient_waiting' ||
+              appt.status === 'patient_admitted' ||
+              appt.status === 'in_progress' ||
+              appt.call_active;
             const doctorName = appt.doctor_name || appt.doctor?.name || appt.doctor?.full_name || 'Dr. Rahul Sharma';
             const department = appt.department || appt.doctor?.specialty || 'General Medicine';
             const date = appt.scheduled_date || appt.scheduled_at?.split('T')?.[0] || 'Scheduled Date';

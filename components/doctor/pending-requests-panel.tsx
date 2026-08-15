@@ -166,6 +166,24 @@ export function PendingRequestsPanel({ doctorId, onMetricsChange }: PendingReque
     }
   }
 
+  const handleStartConsultation = async (requestId: string) => {
+    setWorkingId(requestId)
+    try {
+      const res = await fetch('/api/appointments/call', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ appointment_id: requestId, action: 'start' })
+      })
+      if (!res.ok) throw new Error("Failed to start consultation")
+      router.push(`/consultation/${requestId}`)
+    } catch (err) {
+      console.error(err)
+      toast.error("Could not start consultation. Please try again.")
+    } finally {
+      setWorkingId(null)
+    }
+  }
+
   const handleRejectAppointment = rejectRequest
 
   const pendingCount = requests.filter((r) => r.status === "pending" || r.status === "requested").length
@@ -309,14 +327,18 @@ export function PendingRequestsPanel({ doctorId, onMetricsChange }: PendingReque
                       </>
                     )}
                     <Button
-                      asChild
                       size="sm"
                       variant="default"
+                      onClick={() => handleStartConsultation(request.id)}
+                      disabled={isWorking}
                       className="gap-1.5"
                     >
-                      <Link href={`/consultation/${request.id}`}>
-                        <Video className="h-4 w-4" /> Start Consultation
-                      </Link>
+                      {workingId === request.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Video className="h-4 w-4" />
+                      )}
+                      Start Consultation
                     </Button>
                     <Button
                       onClick={() => handleRejectAppointment(request.id)}

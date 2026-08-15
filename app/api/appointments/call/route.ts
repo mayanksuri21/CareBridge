@@ -12,9 +12,7 @@ export async function POST(request: Request) {
       { auth: { persistSession: false } }
     );
 
-    const isStart = action === 'start';
-
-    // 1. Fetch current appointment details to preserve reason
+    // 1. Fetch current appointment details
     const { data: currentAppt } = await supabase
       .from('appointments')
       .select('reason, status')
@@ -26,40 +24,55 @@ export async function POST(request: Request) {
     }
 
     let reasonText = currentAppt.reason || '';
-    if (isStart) {
-      if (!reasonText.includes('[CALL_ACTIVE]')) {
-        reasonText = reasonText ? `${reasonText} [CALL_ACTIVE]` : '[CALL_ACTIVE]';
-      }
-      
-      // Update reason to mark call as active
-      const { data, error } = await supabase
-        .from('appointments')
-        .update({ reason: reasonText })
-        .eq('id', appointment_id)
-        .select();
+    let statusText = currentAppt.status || 'booked';
 
-      if (error) console.warn("Start call update warning:", error);
-    } else {
-      // Remove CALL_ACTIVE marker and mark status as completed
-      if (reasonText.includes('[CALL_ACTIVE]')) {
-        reasonText = reasonText.replace(' [CALL_ACTIVE]', '').replace('[CALL_ACTIVE]', '');
-      }
+    const tags = ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]'];
+    const removeTags = (text: string) => {
+      let t = text;
+      tags.forEach(tag => {
+        t = t.replace(` ${tag}`, '').replace(tag, '');
+      });
+      return t;
+    };
 
-      const { data, error } = await supabase
-        .from('appointments')
-        .update({
-          reason: reasonText,
-          status: 'completed'
-        })
-        .eq('id', appointment_id)
-        .select();
+    let cleanReason = removeTags(reasonText);
 
-      if (error) console.warn("End call update warning:", error);
+    if (action === 'start') {
+      reasonText = `${cleanReason} [DOCTOR_IN_ROOM] [CALL_ACTIVE]`;
+      statusText = 'booked';
+    } else if (action === 'join_waiting') {
+      reasonText = `${cleanReason} [PATIENT_WAITING] [CALL_ACTIVE]`;
+      statusText = 'booked';
+    } else if (action === 'admit') {
+      reasonText = `${cleanReason} [PATIENT_ADMITTED] [CALL_ACTIVE]`;
+      statusText = 'booked';
+    } else if (action === 'decline_admission') {
+      reasonText = `${cleanReason} [PATIENT_DECLINED]`;
+      statusText = 'declined';
+    } else if (action === 'end' || action === 'complete') {
+      reasonText = cleanReason;
+      statusText = 'completed';
+    }
+
+    const { data, error } = await supabase
+      .from('appointments')
+      .update({
+        reason: reasonText,
+        status: statusText
+      })
+      .eq('id', appointment_id)
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      console.error("Update appointment call status error:", error.message);
+      throw error;
     }
 
     return NextResponse.json({ 
       success: true, 
-      status: isStart ? 'in_progress' : 'completed',
+      status: statusText,
+      reason: reasonText,
       appointment_id 
     });
   } catch (err: any) {
@@ -79,16 +92,41 @@ export async function GET(request: Request) {
 
     const mapAppointment = (appt: any) => {
       if (!appt) return null;
-      const isCallActive = appt.reason?.includes('[CALL_ACTIVE]') || false;
-      let cleanReason = appt.reason || '';
-      if (isCallActive) {
-        cleanReason = cleanReason.replace(' [CALL_ACTIVE]', '').replace('[CALL_ACTIVE]', '');
+      const reasonStr = appt.reason || '';
+      
+      const isDoctorInRoom = reasonStr.includes('[DOCTOR_IN_ROOM]');
+      const isPatientWaiting = reasonStr.includes('[PATIENT_WAITING]');
+      const isPatientAdmitted = reasonStr.includes('[PATIENT_ADMITTED]');
+      const isPatientDeclined = reasonStr.includes('[PATIENT_DECLINED]');
+      const isCallActive = reasonStr.includes('[CALL_ACTIVE]');
+
+      let cleanReason = reasonStr;
+      ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]'].forEach(tag => {
+        cleanReason = cleanReason.replace(` ${tag}`, '').replace(tag, '');
+      });
+
+      let statusVal = appt.status;
+      if (isPatientAdmitted) {
+        statusVal = 'patient_admitted';
+      } else if (isPatientWaiting) {
+        statusVal = 'patient_waiting';
+      } else if (isDoctorInRoom) {
+        statusVal = 'doctor_in_room';
+      } else if (isCallActive) {
+        statusVal = 'in_progress';
+      } else if (appt.status === 'booked') {
+        statusVal = 'scheduled';
       }
+
       return {
         ...appt,
-        status: isCallActive ? 'in_progress' : (appt.status === 'booked' ? 'scheduled' : appt.status),
-        call_active: isCallActive,
-        reason: cleanReason
+        status: statusVal,
+        call_active: isCallActive || isDoctorInRoom || isPatientWaiting || isPatientAdmitted,
+        reason: cleanReason,
+        is_doctor_in_room: isDoctorInRoom,
+        is_patient_waiting: isPatientWaiting,
+        is_patient_admitted: isPatientAdmitted,
+        is_patient_declined: isPatientDeclined
       };
     };
 

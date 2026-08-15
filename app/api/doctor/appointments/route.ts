@@ -32,7 +32,7 @@ export async function GET(request: Request) {
           phone
         )
       `)
-      .in('status', ['scheduled', 'pending', 'in_progress', 'booked'])
+      .in('status', ['scheduled', 'pending', 'in_progress', 'booked', 'declined'])
       .order('created_at', { ascending: false });
 
     if (doctorId) {
@@ -43,10 +43,30 @@ export async function GET(request: Request) {
     if (error) throw error;
 
     const mapped = (data || []).map((appt: any) => {
-      const isCallActive = appt.reason?.includes('[CALL_ACTIVE]') || false;
-      let cleanReason = appt.reason || '';
-      if (isCallActive) {
-        cleanReason = cleanReason.replace(' [CALL_ACTIVE]', '').replace('[CALL_ACTIVE]', '');
+      const reasonStr = appt.reason || '';
+      
+      const isDoctorInRoom = reasonStr.includes('[DOCTOR_IN_ROOM]');
+      const isPatientWaiting = reasonStr.includes('[PATIENT_WAITING]');
+      const isPatientAdmitted = reasonStr.includes('[PATIENT_ADMITTED]');
+      const isPatientDeclined = reasonStr.includes('[PATIENT_DECLINED]');
+      const isCallActive = reasonStr.includes('[CALL_ACTIVE]');
+
+      let cleanReason = reasonStr;
+      ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]'].forEach(tag => {
+        cleanReason = cleanReason.replace(` ${tag}`, '').replace(tag, '');
+      });
+
+      let statusVal = appt.status;
+      if (isPatientAdmitted) {
+        statusVal = 'patient_admitted';
+      } else if (isPatientWaiting) {
+        statusVal = 'patient_waiting';
+      } else if (isDoctorInRoom) {
+        statusVal = 'doctor_in_room';
+      } else if (isCallActive) {
+        statusVal = 'in_progress';
+      } else if (appt.status === 'booked') {
+        statusVal = 'scheduled';
       }
 
       // Parse symptoms, date and time from reason dynamically
@@ -60,12 +80,16 @@ export async function GET(request: Request) {
 
       return {
         ...appt,
-        status: isCallActive ? 'in_progress' : (appt.status === 'booked' ? 'scheduled' : appt.status),
-        call_active: isCallActive,
+        status: statusVal,
+        call_active: isCallActive || isDoctorInRoom || isPatientWaiting || isPatientAdmitted,
         reason: cleanReason,
         scheduled_date: scheduledDate,
         scheduled_time: scheduledTime,
-        symptoms: symptomsText
+        symptoms: symptomsText,
+        is_doctor_in_room: isDoctorInRoom,
+        is_patient_waiting: isPatientWaiting,
+        is_patient_admitted: isPatientAdmitted,
+        is_patient_declined: isPatientDeclined
       };
     });
 
