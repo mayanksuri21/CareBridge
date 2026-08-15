@@ -200,6 +200,7 @@ export async function POST(request: Request) {
     } catch (err: any) {
       console.warn('Inserting using baseline prescriptions schema fallback...', err.message);
       
+      const formattedNote = `Diagnosis: ${diagnosis || 'General Consultation'}\n\nMedications: ${JSON.stringify(medications)}\n\nInstructions: ${instructions}`;
       const { data, error } = await supabaseAdmin
         .from('prescriptions')
         .insert([
@@ -207,7 +208,7 @@ export async function POST(request: Request) {
             appointment_id,
             doctor_id,
             patient_id,
-            note: instructions, // Store cleanly as instructions in note
+            note: formattedNote,
             created_at: new Date().toISOString()
           }
         ])
