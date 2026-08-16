@@ -48,14 +48,17 @@ const statusLabels: Record<string, string> = {
   scheduled: "Scheduled",
   completed: "Completed",
   cancelled: "Cancelled",
+  declined: "Declined",
+  pending: "Pending Approval",
   "in-progress": "In Progress",
   in_progress: "In Progress",
 }
 
 function statusVariant(status: ConsultationStatus) {
   if (status === "completed") return "secondary" as const
-  if (status === "cancelled") return "destructive" as const
+  if (status === "cancelled" || status === "declined") return "destructive" as const
   if (status === "in-progress" || status === "in_progress") return "default" as const
+  if (status === "pending") return "outline" as const
   return "outline" as const
 }
 
@@ -225,7 +228,11 @@ export function TodayConsultations({ doctorId, initialConsultations = [] }: Toda
                     id: consultation.patient_id,
                     name: null,
                   }
-                  const canJoin = consultation.status !== "completed" && consultation.status !== "cancelled"
+                  const canJoin = 
+                    consultation.status !== "completed" && 
+                    consultation.status !== "cancelled" && 
+                    consultation.status !== "declined" && 
+                    consultation.status !== "pending"
 
                   return (
                     <TableRow key={consultation.id}>

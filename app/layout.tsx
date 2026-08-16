@@ -6,6 +6,7 @@ import './globals.css'
 import { RouteTransition } from '@/components/route-transition'
 import { ThemeProvider } from '@/components/theme-provider'
 import { LanguageProvider } from '@/components/language-provider'
+import { AuthProvider } from '@/components/auth-provider'
 import { ErrorBoundary } from '@/components/error-boundary'
 import { Toaster } from '@/components/ui/toaster'
 
@@ -31,9 +32,11 @@ export default function RootLayout({
         <ErrorBoundary>
           <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
             <LanguageProvider>
-              <RouteTransition>
-                {children}
-              </RouteTransition>
+              <AuthProvider>
+                <RouteTransition>
+                  {children}
+                </RouteTransition>
+              </AuthProvider>
               <Toaster />
               <Analytics />
             </LanguageProvider>

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { User, CalendarDays, Home, FileText, Stethoscope, Menu, X } from "lucide-react"
 
@@ -13,64 +13,29 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { createSupabaseBrowserClient } from "@/lib/supabase/client"
-import type { Session } from "@supabase/supabase-js"
-
-export type NavProfile = {
-  name: string | null
-  role: "patient" | "doctor" | null
-}
+import { useAuth } from "@/components/auth-provider"
 
 const HOME_URL = "/"
 
 export function Navbar() {
-  const supabase = useMemo(() => createSupabaseBrowserClient(), [])
-  const [session, setSession] = useState<Session | null>(null)
-  const [profile, setProfile] = useState<NavProfile | null>(null)
+  const { session, profile, loading, signOut } = useAuth()
   const [mounted, setMounted] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
 
   useEffect(() => {
     setMounted(true)
   }, [])
 
-  useEffect(() => {
-    let isMounted = true
-    const init = async () => {
-      const { data } = await supabase.auth.getSession()
-      if (!isMounted) return
-      setSession(data.session)
-      if (data.session) {
-        const { data: row } = await supabase
-          .from("profiles")
-          .select("name, role")
-          .eq("id", data.session.user.id)
-          .maybeSingle()
-        if (isMounted && row) setProfile({ name: row.name ?? null, role: row.role ?? null })
-      }
+  const handleSignOut = async (e?: React.MouseEvent | any) => {
+    if (e && e.preventDefault) {
+      e.preventDefault()
     }
-    void init()
-
-    const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (!isMounted) return
-      setSession(session)
-      if (session) {
-        const { data: row } = await supabase
-          .from("profiles")
-          .select("name, role")
-          .eq("id", session.user.id)
-          .maybeSingle()
-        if (isMounted && row) setProfile({ name: row.name ?? null, role: row.role ?? null })
-      } else {
-        setProfile(null)
-      }
-    })
-
-    return () => {
-      isMounted = false
-      listener.subscription.unsubscribe()
-    }
-  }, [supabase])
+    if (signingOut) return
+    setSigningOut(true)
+    await signOut()
+    setSigningOut(false)
+  }
 
   const displayName = profile?.name || session?.user.user_metadata?.full_name || session?.user.email || "Account"
   const isPatient = session && profile?.role === "patient"
@@ -131,7 +96,9 @@ export function Navbar() {
                   </Link>
                 </>
               )}
-              {session ? (
+              {loading ? (
+                <AuthButton />
+              ) : session ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" size="sm" className="gap-1.5">
@@ -153,11 +120,9 @@ export function Navbar() {
                       </DropdownMenuItem>
                     )}
                     <DropdownMenuSeparator />
-                    <form action="/api/auth/logout" method="post" className="w-full">
-                      <DropdownMenuItem asChild>
-                        <button type="submit" className="w-full text-left">Sign out</button>
-                      </DropdownMenuItem>
-                    </form>
+                    <DropdownMenuItem onSelect={handleSignOut} className="text-left cursor-pointer">
+                      Sign out
+                    </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
               ) : (
@@ -168,7 +133,9 @@ export function Navbar() {
 
           {mounted && (
             <div className="md:hidden flex items-center gap-2">
-              {session ? (
+              {loading ? (
+                <AuthButton />
+              ) : session ? (
                 <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex">
                   <Link href="/profile">{displayName}</Link>
                 </Button>
@@ -237,17 +204,24 @@ export function Navbar() {
                 </Link>
               </>
             )}
-            {!session && (
+            {loading ? (
               <div className="mt-1">
                 <AuthButton />
               </div>
-            )}
-            {session && (
-              <form action="/api/auth/logout" method="post" className="mt-1">
-                <Button type="submit" variant="outline" size="sm" className="w-full">
-                  Sign out
-                </Button>
-              </form>
+            ) : !session ? (
+              <div className="mt-1">
+                <AuthButton />
+              </div>
+            ) : (
+              <Button 
+                onClick={() => handleSignOut()} 
+                disabled={signingOut} 
+                variant="outline" 
+                size="sm" 
+                className="w-full mt-1"
+              >
+                {signingOut ? "Signing out..." : "Sign out"}
+              </Button>
             )}
           </div>
         )}

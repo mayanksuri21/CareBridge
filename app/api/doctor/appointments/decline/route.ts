@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
   try {
-    const { appointment_id } = await request.json();
+    const { appointment_id, reason_notes, decline_reason } = await request.json();
     if (!appointment_id) {
       return NextResponse.json({ error: 'Missing appointment_id' }, { status: 400 });
     }
@@ -16,18 +16,24 @@ export async function POST(request: Request) {
       auth: { persistSession: false }
     });
 
-    // 1. Try to set the status to 'declined'
+    const declineReason = reason_notes || decline_reason;
+    const updatePayload: any = { 
+      status: 'declined'
+    };
+    if (declineReason) {
+      updatePayload.reason_notes = declineReason;
+    }
+
     let { error } = await supabaseAdmin
       .from('appointments')
-      .update({ status: 'declined' })
+      .update(updatePayload)
       .eq('id', appointment_id);
 
-    // 2. Resilient check constraint fallback to 'cancelled'
     if (error && (error.message.includes("check constraint") || error.code === "23514")) {
       console.warn("declined status violates database constraint, trying cancelled fallback...");
       const { error: fallbackErr } = await supabaseAdmin
         .from('appointments')
-        .update({ status: 'cancelled' })
+        .update({ ...updatePayload, status: 'cancelled' })
         .eq('id', appointment_id);
       error = fallbackErr;
     }

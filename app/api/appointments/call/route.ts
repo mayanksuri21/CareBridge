@@ -99,9 +99,10 @@ export async function GET(request: Request) {
       const isPatientAdmitted = reasonStr.includes('[PATIENT_ADMITTED]');
       const isPatientDeclined = reasonStr.includes('[PATIENT_DECLINED]');
       const isCallActive = reasonStr.includes('[CALL_ACTIVE]');
+      const isPendingApprovalTag = reasonStr.includes('[PENDING_APPROVAL]');
 
       let cleanReason = reasonStr;
-      ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]'].forEach(tag => {
+      ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]'].forEach(tag => {
         cleanReason = cleanReason.replace(` ${tag}`, '').replace(tag, '');
       });
 
@@ -114,8 +115,12 @@ export async function GET(request: Request) {
         statusVal = 'doctor_in_room';
       } else if (isCallActive) {
         statusVal = 'in_progress';
-      } else if (appt.status === 'booked') {
+      } else if (appt.status === 'pending' || (appt.status === 'booked' && isPendingApprovalTag)) {
+        statusVal = 'pending';
+      } else if (appt.status === 'booked' || appt.status === 'scheduled') {
         statusVal = 'scheduled';
+      } else if (appt.status === 'cancelled' || appt.status === 'rejected') {
+        statusVal = 'declined';
       }
 
       return {

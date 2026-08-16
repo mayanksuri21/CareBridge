@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { Mic, MicOff, Video, VideoOff, PhoneOff, User, Activity, Loader2, Check, X, LogOut, ShieldAlert, FileText, Plus, Trash } from 'lucide-react';
+import { Mic, MicOff, Video, VideoOff, PhoneOff, User, Activity, Loader2, Check, X, LogOut, ShieldAlert, FileText, Plus, Trash, AlertCircle } from 'lucide-react';
 import Link from 'next/link';
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
@@ -147,13 +147,22 @@ export default function ConsultationRoom() {
   useEffect(() => {
     if (!showCallView || !token) return;
 
+    room.on(RoomEvent.Connected, async () => {
+      try {
+        if (typeof room.localParticipant.enableCameraAndMicrophone === 'function') {
+          await room.localParticipant.enableCameraAndMicrophone();
+        } else {
+          await room.localParticipant.setCameraEnabled(true);
+          await room.localParticipant.setMicrophoneEnabled(true);
+        }
+      } catch (trackErr) {
+        console.error("PublishTrackError caught safely:", trackErr);
+      }
+    });
+
     const connectToRoom = async () => {
       try {
         await room.connect(process.env.NEXT_PUBLIC_LIVEKIT_URL!, token);
-        
-        // Publish local camera and mic
-        await room.localParticipant.setCameraEnabled(true);
-        await room.localParticipant.setMicrophoneEnabled(true);
 
         navigator.mediaDevices?.getUserMedia({ video: true, audio: true })
           .then((s) => {
@@ -456,6 +465,54 @@ export default function ConsultationRoom() {
         <p className="text-xs text-slate-400">We could not find this consultation appointment. Please check the URL.</p>
         <Link href="/patient/dashboard" className="mt-4 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-xs rounded-xl transition">
           Return to Dashboard
+        </Link>
+      </div>
+    );
+  }
+
+  const apptStatus = appointment.status;
+  const isPendingStatus = apptStatus === 'pending';
+  const isDeclinedStatus = apptStatus === 'declined' || apptStatus === 'cancelled' || apptStatus === 'rejected';
+  const backLink = isDoctor ? '/doctor/dashboard' : '/patient/dashboard';
+  const backLabel = isDoctor ? 'Back to Doctor Dashboard' : 'Back to Patient Dashboard';
+
+  if (isPendingStatus) {
+    return (
+      <div className="min-h-screen bg-[#070b14] text-white flex flex-col items-center justify-center font-sans p-6 text-center">
+        <div className="w-16 h-16 rounded-full bg-amber-500/10 border border-amber-500/40 flex items-center justify-center mb-6">
+          <AlertCircle className="w-8 h-8 text-amber-400" />
+        </div>
+        <h2 className="text-xl font-bold text-white mb-2">Consultation Not Yet Approved</h2>
+        <p className="text-sm text-slate-400 max-w-sm mb-2">
+          This consultation request is still awaiting the doctor&apos;s approval.
+        </p>
+        <p className="text-xs text-slate-500 max-w-sm">
+          Once the doctor approves your request, the video consultation will become available.
+        </p>
+        <Link href={backLink} className="mt-8 px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-xs font-bold rounded-xl transition border border-slate-700">
+          {backLabel}
+        </Link>
+      </div>
+    );
+  }
+
+  if (isDeclinedStatus) {
+    const declineReason = appointment.reason_notes || 'The doctor was unable to accept this consultation request at the requested time.';
+    return (
+      <div className="min-h-screen bg-[#070b14] text-white flex flex-col items-center justify-center font-sans p-6 text-center">
+        <div className="w-16 h-16 rounded-full bg-rose-500/10 border border-rose-500/40 flex items-center justify-center mb-6">
+          <X className="w-8 h-8 text-rose-400" />
+        </div>
+        <h2 className="text-xl font-bold text-white mb-2">Consultation Request Declined</h2>
+        <p className="text-sm text-slate-400 max-w-sm mb-4">
+          The doctor has declined this consultation request.
+        </p>
+        <div className="max-w-md w-full bg-slate-900/60 border border-slate-800 rounded-2xl p-4 text-left mb-2">
+          <p className="text-[11px] uppercase font-semibold text-rose-400 mb-1.5">Decline Reason</p>
+          <p className="text-xs text-slate-300 leading-relaxed">{declineReason}</p>
+        </div>
+        <Link href={backLink} className="mt-6 px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-xs font-bold rounded-xl transition border border-slate-700">
+          {backLabel}
         </Link>
       </div>
     );

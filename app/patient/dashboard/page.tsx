@@ -143,10 +143,16 @@ export default async function PatientDashboardPage() {
       if (splitIndex !== -1) {
         cleanReason = reasonStr.substring(0, splitIndex).trim()
       }
+      cleanReason = cleanReason.replace(/\[PENDING_APPROVAL\]/g, '').trim()
       
       const parsedDate = dateMatch ? dateMatch[1].trim() : '2026-08-17'
       const parsedTime = timeMatch ? timeMatch[1].trim() : '02:00 PM'
       const parsedSymptoms = symptomsMatch ? symptomsMatch[1].trim() : ''
+
+      let statusVal = apt.status || 'scheduled'
+      if (apt.status === 'booked') {
+        statusVal = reasonStr.includes('[PENDING_APPROVAL]') ? 'pending' : 'scheduled'
+      }
 
       return {
         id: apt.id,
@@ -160,7 +166,7 @@ export default async function PatientDashboardPage() {
         appointment_date: parsedDate,
         time_slot: parsedTime,
         symptoms: parsedSymptoms,
-        status: apt.status || 'scheduled',
+        status: statusVal,
         reason: cleanReason || 'General Consultation',
         created_at: apt.created_at
       }

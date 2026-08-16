@@ -34,6 +34,7 @@ import {
 import Link from "next/link"
 import type { Session } from "@supabase/supabase-js"
 import { TextEffect } from "@/components/ui/text-effect"
+import { useAuth } from "@/components/auth-provider"
 
 interface ProfileData {
   id: string
@@ -64,6 +65,7 @@ export default function ProfilePage() {
   const router = useRouter()
   const supabase = useMemo(() => createSupabaseBrowserClient(), [])
   const { toast } = useToast()
+  const { session: authSession, loading: authLoading, refreshProfile } = useAuth()
   
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
@@ -77,49 +79,29 @@ export default function ProfilePage() {
 
   useEffect(() => {
     const loadProfile = async () => {
+      if (authLoading) return
+
+      if (!authSession) {
+        console.log("Profile page: No session found, redirecting to login")
+        setLoading(false)
+        toast({
+          title: "Not Authenticated",
+          description: "Please log in to access your profile",
+          variant: "destructive"
+        })
+        router.push("/login")
+        return
+      }
+
       try {
-        console.log("Profile page: Testing Supabase connection...")
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-        const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-        console.log("Profile page: Supabase URL:", supabaseUrl ? "Set" : "Missing")
-        console.log("Profile page: Supabase Key:", supabaseKey ? "Set (length: " + supabaseKey.length + ")" : "Missing")
-        
-        console.log("Profile page: Starting to load session...")
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession()
-        console.log("Profile page: Session result:", session ? "Session exists" : "No session", sessionError)
-        
-        if (sessionError) {
-          console.error("Session error:", sessionError)
-          setLoading(false)
-          toast({
-            title: "Authentication Error",
-            description: "Please log in to access your profile",
-            variant: "destructive"
-          })
-          router.push("/login")
-          return
-        }
-
-        if (!session) {
-          console.log("Profile page: No session found, redirecting to login")
-          setLoading(false)
-          toast({
-            title: "Not Authenticated",
-            description: "Please log in to access your profile",
-            variant: "destructive"
-          })
-          router.push("/login")
-          return
-        }
-
-        console.log("Profile page: Session found, user ID:", session.user.id)
-        setSession(session)
+        console.log("Profile page: Session found, user ID:", authSession.user.id)
+        setSession(authSession)
 
         console.log("Profile page: Checking for existing profile...")
         const { data: profile, error: profileError } = await supabase
           .from("profiles")
           .select("*")
-          .eq("id", session.user.id)
+          .eq("id", authSession.user.id)
           .single()
 
         console.log("Profile page: Profile query result:", profile ? "Profile found" : "No profile", profileError)
@@ -131,8 +113,8 @@ export default function ProfilePage() {
           console.log("Profile page: No profile found, showing onboarding")
           setShowOnboarding(true)
           setProfileData({
-            name: session.user.user_metadata?.full_name || "",
-            email: session.user.email || "",
+            name: authSession.user.user_metadata?.full_name || "",
+            email: authSession.user.email || "",
             role: "patient",
             phone: "",
             address: "",
@@ -154,8 +136,8 @@ export default function ProfilePage() {
           const isJsonAbout = profile.about?.trim().startsWith('[') || profile.about?.trim().startsWith('{');
           setProfileData({
             ...profile,
-            name: profile.name || session.user.user_metadata?.full_name || "",
-            email: profile.email || session.user.email || "",
+            name: profile.name || authSession.user.user_metadata?.full_name || "",
+            email: profile.email || authSession.user.email || "",
             about: isJsonAbout ? "" : (profile.about || ""),
             age: profile.age ?? "",
             gender: profile.gender ?? "",
@@ -188,7 +170,7 @@ export default function ProfilePage() {
 
     console.log("Profile page: useEffect triggered, calling loadProfile")
     loadProfile()
-  }, [router, supabase, toast])
+  }, [router, supabase, toast, authLoading, authSession])
 
   const calculateCompleteness = (profile: any) => {
     const requiredFields = ['name', 'email', 'phone', 'role']
@@ -337,7 +319,7 @@ export default function ProfilePage() {
       setShowOnboarding(false)
       calculateCompleteness(updateData)
 
-      window.location.reload() 
+      await refreshProfile()
 
       toast({
         title: "Success",
@@ -388,6 +370,7 @@ export default function ProfilePage() {
       setProfileData(basicData)
       setShowOnboarding(false)
       calculateCompleteness(basicData)
+      await refreshProfile()
 
     } catch (error) {
       console.error("Skip onboarding error:", error)

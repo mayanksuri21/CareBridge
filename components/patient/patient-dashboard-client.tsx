@@ -78,7 +78,7 @@ export function PatientDashboardClient({
   const [loadingPrescriptions, setLoadingPrescriptions] = useState(true)
   const [appointments, setAppointments] = useState<any[]>(initialAppointments)
   const [loadingAppointments, setLoadingAppointments] = useState(initialAppointments.length === 0)
-  
+
   const [symptomLogs, setSymptomLogs] = useState<any[]>([])
 
   useEffect(() => {
@@ -92,6 +92,10 @@ export function PatientDashboardClient({
 
   const upcomingCount = appointments.filter((appt) =>
     appt.status === "scheduled" || appt.status === "confirmed" || appt.status === "booked" || appt.status === "in_progress"
+  ).length
+
+  const pendingCount = appointments.filter((appt) =>
+    appt.status === "pending"
   ).length
 
   const liveAppointment = appointments.find((appt) =>
@@ -120,7 +124,7 @@ export function PatientDashboardClient({
       }
       const res = await fetch(`/api/prescriptions?patient_id=${patientId}`)
       if (!res.ok) throw new Error("Failed to fetch prescriptions")
-      
+
       const payload = await res.json()
       setPrescriptions(payload.prescriptions || [])
     } catch (err) {
@@ -136,11 +140,64 @@ export function PatientDashboardClient({
   const refreshAppointments = useCallback(async () => {
     try {
       setLoadingAppointments(true)
-      const res = await fetch(`/api/patient/appointments?patient_id=${patientId}`)
+      const res = await fetch(`/api/patient/consultations`)
       if (!res.ok) throw new Error("Failed to fetch appointments")
-      
+
       const payload = await res.json()
-      setAppointments(payload.appointments || [])
+      let list = payload.appointments || []
+
+      // Filter by patient ID
+      if (patientId) {
+        list = list.filter((a: any) => a.patient_id === patientId);
+      }
+
+      // Map appointment status client-side exactly like the call api does
+      list = list.map((appt: any) => {
+        const reasonStr = appt.reason || '';
+        const isDoctorInRoom = reasonStr.includes('[DOCTOR_IN_ROOM]');
+        const isPatientWaiting = reasonStr.includes('[PATIENT_WAITING]');
+        const isPatientAdmitted = reasonStr.includes('[PATIENT_ADMITTED]');
+        const isPatientDeclined = reasonStr.includes('[PATIENT_DECLINED]');
+        const isCallActive = reasonStr.includes('[CALL_ACTIVE]');
+        const isPendingApproval = reasonStr.includes('[PENDING_APPROVAL]');
+
+        let cleanReason = reasonStr;
+        ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]'].forEach(tag => {
+          cleanReason = cleanReason.replace(` ${tag}`, '').replace(tag, '');
+        });
+
+        let statusVal = appt.status;
+        if (isPatientAdmitted) {
+          statusVal = 'patient_admitted';
+        } else if (isPatientWaiting) {
+          statusVal = 'patient_waiting';
+        } else if (isDoctorInRoom) {
+          statusVal = 'doctor_in_room';
+        } else if (isCallActive) {
+          statusVal = 'in_progress';
+        } else if (appt.status === 'booked') {
+          statusVal = isPendingApproval ? 'pending' : 'scheduled';
+        }
+
+        // Parse date/time
+        const dateMatch = cleanReason.match(/Selected Date:\s*([\w\d, -]+)/i) || cleanReason.match(/Preferred Date:\s*([\w\d, -]+)/i);
+        const timeMatch = cleanReason.match(/Time Slot:\s*([\w\d: ]+)/i);
+        const parsedDate = dateMatch ? dateMatch[1].trim() : (appt.scheduled_date || '17-08-2026');
+        const parsedTime = timeMatch ? timeMatch[1].trim() : (appt.scheduled_time || '12:00 PM');
+
+        return {
+          ...appt,
+          status: statusVal,
+          call_active: isCallActive || isDoctorInRoom || isPatientWaiting || isPatientAdmitted,
+          reason: cleanReason,
+          appointment_date: parsedDate,
+          time_slot: parsedTime,
+          doctor_name: appt.doctor_name || 'Dr. Rahul Sharma',
+          department: appt.department || 'General Medicine'
+        };
+      });
+
+      setAppointments(list)
     } catch (err) {
       console.error(err)
       setAppointments([])
@@ -156,11 +213,61 @@ export function PatientDashboardClient({
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
-        const res = await fetch('/api/appointments/call');
+        const res = await fetch('/api/patient/consultations');
         if (res.ok) {
           const data = await res.json();
           if (data.appointments) {
-            setAppointments(data.appointments.filter((a: any) => a.patient_id === patientId));
+            let list = data.appointments;
+            if (patientId) {
+              list = list.filter((a: any) => a.patient_id === patientId);
+            }
+
+            list = list.map((appt: any) => {
+              const reasonStr = appt.reason || '';
+              const isDoctorInRoom = reasonStr.includes('[DOCTOR_IN_ROOM]');
+              const isPatientWaiting = reasonStr.includes('[PATIENT_WAITING]');
+              const isPatientAdmitted = reasonStr.includes('[PATIENT_ADMITTED]');
+              const isPatientDeclined = reasonStr.includes('[PATIENT_DECLINED]');
+              const isCallActive = reasonStr.includes('[CALL_ACTIVE]');
+              const isPendingApproval = reasonStr.includes('[PENDING_APPROVAL]');
+
+              let cleanReason = reasonStr;
+              ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]'].forEach(tag => {
+                cleanReason = cleanReason.replace(` ${tag}`, '').replace(tag, '');
+              });
+
+              let statusVal = appt.status;
+              if (isPatientAdmitted) {
+                statusVal = 'patient_admitted';
+              } else if (isPatientWaiting) {
+                statusVal = 'patient_waiting';
+              } else if (isDoctorInRoom) {
+                statusVal = 'doctor_in_room';
+              } else if (isCallActive) {
+                statusVal = 'in_progress';
+              } else if (appt.status === 'booked') {
+                statusVal = isPendingApproval ? 'pending' : 'scheduled';
+              }
+
+              // Parse date/time
+              const dateMatch = cleanReason.match(/Selected Date:\s*([\w\d, -]+)/i) || cleanReason.match(/Preferred Date:\s*([\w\d, -]+)/i);
+              const timeMatch = cleanReason.match(/Time Slot:\s*([\w\d: ]+)/i);
+              const parsedDate = dateMatch ? dateMatch[1].trim() : (appt.scheduled_date || '17-08-2026');
+              const parsedTime = timeMatch ? timeMatch[1].trim() : (appt.scheduled_time || '12:00 PM');
+
+              return {
+                ...appt,
+                status: statusVal,
+                call_active: isCallActive || isDoctorInRoom || isPatientWaiting || isPatientAdmitted,
+                reason: cleanReason,
+                appointment_date: parsedDate,
+                time_slot: parsedTime,
+                doctor_name: appt.doctor_name || 'Dr. Rahul Sharma',
+                department: appt.department || 'General Medicine'
+              };
+            });
+
+            setAppointments(list);
           }
         }
       } catch (err) {
@@ -250,7 +357,7 @@ export function PatientDashboardClient({
           patient_id: patientId,
           doctor_id: doctorId,
           slot_id: slotId,
-          status: "booked",
+          status: "pending",
           reason,
           symptoms: symptomsPayload,
         })
@@ -345,7 +452,11 @@ export function PatientDashboardClient({
             <div className="rounded-2xl border border-slate-800/60 bg-slate-950/40 backdrop-blur-sm p-5 hover:border-slate-700/65 transition-all group relative overflow-hidden shadow-md">
               <div className="absolute top-0 left-0 w-1.5 h-full bg-cyan-500/40" />
               <p className="text-xs font-medium text-slate-400">Upcoming Appointments</p>
-              <p className="mt-2 text-3xl font-extrabold tracking-tight text-white group-hover:scale-105 transition-transform origin-left">{upcomingCount} <span className="text-sm font-medium text-slate-400">Scheduled</span></p>
+              <p className="mt-2 text-3xl font-extrabold tracking-tight text-white group-hover:scale-105 transition-transform origin-left">
+                {upcomingCount} <span className="text-sm font-medium text-slate-400">Scheduled</span>
+                <span className="text-sm font-medium text-slate-400 ml-2">|</span>
+                <span className="text-sm font-medium text-amber-400 ml-2">{pendingCount} Pending</span>
+              </p>
             </div>
             <div className="rounded-2xl border border-slate-800/60 bg-slate-950/40 backdrop-blur-sm p-5 hover:border-slate-700/65 transition-all group relative overflow-hidden shadow-md">
               <div className="absolute top-0 left-0 w-1.5 h-full bg-violet-500/40" />
@@ -361,22 +472,22 @@ export function PatientDashboardClient({
 
         <Tabs defaultValue="records" className="space-y-6">
           <TabsList className="h-auto w-full justify-start gap-2 bg-slate-950/60 border border-slate-900/50 p-2 sm:w-fit rounded-2xl backdrop-blur-md shadow-2xl relative">
-            <TabsTrigger 
-              value="records" 
+            <TabsTrigger
+              value="records"
               className="gap-2 rounded-xl py-2.5 px-4 text-slate-400 transition-all font-semibold text-xs data-[state=active]:bg-slate-900 data-[state=active]:text-emerald-400 data-[state=active]:border-emerald-500/30 data-[state=active]:shadow-[0_0_15px_rgba(16,185,129,0.15)] border border-transparent hover:text-slate-200 hover:border-slate-800/85 hover:bg-slate-900/40"
             >
               <FileText className="size-4 text-emerald-400 group-data-[state=active]:animate-pulse" />
               Medical Records
             </TabsTrigger>
-            <TabsTrigger 
-              value="appointments" 
+            <TabsTrigger
+              value="appointments"
               className="gap-2 rounded-xl py-2.5 px-4 text-slate-400 transition-all font-semibold text-xs data-[state=active]:bg-slate-900 data-[state=active]:text-cyan-400 data-[state=active]:border-cyan-500/30 data-[state=active]:shadow-[0_0_15px_rgba(6,182,212,0.15)] border border-transparent hover:text-slate-200 hover:border-slate-800/85 hover:bg-slate-900/40"
             >
               <CalendarDays className="size-4 text-cyan-400 group-data-[state=active]:animate-pulse" />
               My Consultations
             </TabsTrigger>
-            <TabsTrigger 
-              value="care" 
+            <TabsTrigger
+              value="care"
               className="gap-2 rounded-xl py-2.5 px-4 text-slate-400 transition-all font-semibold text-xs data-[state=active]:bg-slate-900 data-[state=active]:text-violet-400 data-[state=active]:border-violet-500/30 data-[state=active]:shadow-[0_0_15px_rgba(139,92,246,0.15)] border border-transparent hover:text-slate-200 hover:border-slate-800/85 hover:bg-slate-900/40"
             >
               <Activity className="size-4 text-violet-400 group-data-[state=active]:animate-pulse" />
@@ -519,7 +630,7 @@ export function PatientDashboardClient({
                       const dateObj = new Date(log.timestamp)
                       const isEmergency = log.urgency === "emergency"
                       const isUrgent = log.urgency === "urgent"
-                      
+
                       return (
                         <div
                           key={idx}
@@ -529,13 +640,12 @@ export function PatientDashboardClient({
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="font-bold text-white text-sm">{log.condition || "General Symptoms"}</span>
                               <Badge
-                                className={`rounded-full px-2 py-0.5 text-[9px] font-semibold border ${
-                                  isEmergency 
-                                    ? "bg-rose-955/50 border-rose-500/30 text-rose-400" 
-                                    : isUrgent 
-                                      ? "bg-amber-955/50 border-amber-500/30 text-amber-400" 
+                                className={`rounded-full px-2 py-0.5 text-[9px] font-semibold border ${isEmergency
+                                    ? "bg-rose-955/50 border-rose-500/30 text-rose-400"
+                                    : isUrgent
+                                      ? "bg-amber-955/50 border-amber-500/30 text-amber-400"
                                       : "bg-slate-800 border-slate-700 text-slate-300"
-                                }`}
+                                  }`}
                               >
                                 {log.urgency ? log.urgency.charAt(0).toUpperCase() + log.urgency.slice(1) : "Routine"}
                               </Badge>
@@ -559,7 +669,7 @@ export function PatientDashboardClient({
                               {log.description || "No recommendations logged."}
                             </p>
                           </div>
-                          
+
                           <Button asChild size="sm" variant="outline" className="shrink-0 bg-transparent border-slate-800 text-slate-300 hover:bg-slate-800 rounded-xl self-start md:self-center text-xs">
                             <Link href="/symptoms">
                               Run New Check

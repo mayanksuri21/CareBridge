@@ -27,6 +27,7 @@ import {
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
 import { getPostLoginRedirect } from "@/lib/supabase/profile-utils"
 import { useLanguage } from "@/components/language-provider"
+import { useAuth } from "@/components/auth-provider"
 
 type Role = "patient" | "doctor"
 
@@ -35,6 +36,7 @@ function AuthPageContent() {
   const searchParams = useSearchParams()
   const supabase = createSupabaseBrowserClient()
   const { t } = useLanguage()
+  const { session, loading: authLoading } = useAuth()
   
   const [role, setRole] = useState<Role>(() => searchParams.get("role") === "doctor" ? "doctor" : "patient")
   const [name, setName] = useState("")
@@ -49,16 +51,14 @@ function AuthPageContent() {
   const [status, setStatus] = useState<{ type: "success" | "error"; message: string } | null>(null)
 
   useEffect(() => {
-    const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (session) {
-
+    if (!authLoading && session) {
+      const doRedirect = async () => {
         const redirectUrl = await getPostLoginRedirect(session.user.id)
         router.push(redirectUrl)
       }
+      void doRedirect()
     }
-    checkSession()
-  }, [supabase.auth, router])
+  }, [session, authLoading, router])
 
   const handleSignUp = async () => {
     if (password !== confirmPassword) {

@@ -44,15 +44,16 @@ export async function GET(request: Request) {
 
     const mapped = (data || []).map((appt: any) => {
       const reasonStr = appt.reason || '';
-      
+
       const isDoctorInRoom = reasonStr.includes('[DOCTOR_IN_ROOM]');
       const isPatientWaiting = reasonStr.includes('[PATIENT_WAITING]');
       const isPatientAdmitted = reasonStr.includes('[PATIENT_ADMITTED]');
       const isPatientDeclined = reasonStr.includes('[PATIENT_DECLINED]');
       const isCallActive = reasonStr.includes('[CALL_ACTIVE]');
+      const isPendingApprovalTag = reasonStr.includes('[PENDING_APPROVAL]');
 
       let cleanReason = reasonStr;
-      ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]'].forEach(tag => {
+      ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]'].forEach(tag => {
         cleanReason = cleanReason.replace(` ${tag}`, '').replace(tag, '');
       });
 
@@ -65,18 +66,21 @@ export async function GET(request: Request) {
         statusVal = 'doctor_in_room';
       } else if (isCallActive) {
         statusVal = 'in_progress';
-      } else if (appt.status === 'booked') {
+      } else if (appt.status === 'pending' || (appt.status === 'booked' && isPendingApprovalTag)) {
+        statusVal = 'pending';
+      } else if (appt.status === 'booked' || appt.status === 'scheduled') {
         statusVal = 'scheduled';
+      } else if (appt.status === 'cancelled') {
+        statusVal = 'declined';
       }
 
-      // Parse symptoms, date and time from reason dynamically
       const dateMatch = cleanReason.match(/Selected Date:\s*([\w\d, -]+)/i) || cleanReason.match(/Preferred Date:\s*([\w\d, -]+)/i);
       const timeMatch = cleanReason.match(/Time Slot:\s*([\w\d: ]+)/i);
       const symptomsMatch = cleanReason.match(/Symptoms:\s*([\s\S]*)/i);
 
-      const scheduledDate = dateMatch ? dateMatch[1].trim() : '17-08-2026';
-      const scheduledTime = timeMatch ? timeMatch[1].trim() : '12:00 PM';
-      const symptomsText = symptomsMatch ? symptomsMatch[1].trim() : '';
+      const scheduledDate = dateMatch ? dateMatch[1].trim() : (appt.scheduled_date || appt.appointment_date || '17-08-2026');
+      const scheduledTime = timeMatch ? timeMatch[1].trim() : (appt.scheduled_time || appt.time_slot || '12:00 PM');
+      const symptomsText = symptomsMatch ? symptomsMatch[1].trim() : (appt.symptoms || '');
 
       return {
         ...appt,

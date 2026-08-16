@@ -41,8 +41,7 @@ import { useLanguage } from "@/components/language-provider";
 import GradualBlur from "@/components/ui/gradual-blur";
 import { Footer } from "@/components/ui/footer-section";
 import { Navbar } from "@/components/ui/navbar";
-import { createSupabaseBrowserClient } from "@/lib/supabase/client";
-import type { Session } from "@supabase/supabase-js";
+import { useAuth } from "@/components/auth-provider";
 import { TextEffect } from "@/components/ui/text-effect";
 import {
   Accordion,
@@ -57,10 +56,7 @@ export default function HomePage() {
   const [isPlaying, setIsPlaying] = useState(true);
   const { theme, setTheme } = useTheme();
   const { t } = useLanguage();
-  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
-  const [session, setSession] = useState<Session | null>(null);
-  const [profile, setProfile] = useState<{ name: string | null; role: "patient" | "doctor" | null } | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { session, profile, loading } = useAuth();
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -91,70 +87,6 @@ export default function HomePage() {
       } catch {}
     });
   }, [router]);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    const checkSession = async () => {
-      try {
-        const {
-          data: { session },
-          error,
-        } = await supabase.auth.getSession();
-        if (isMounted) {
-          if (error) {
-            console.error("Error getting session on homepage:", error);
-            setSession(null);
-          } else {
-            setSession(session);
-            if (session) {
-              const { data: profile } = await supabase
-                .from("profiles")
-                .select("name, role")
-                .eq("id", session.user.id)
-                .maybeSingle();
-              if (isMounted) setProfile(profile as { name: string | null; role: "patient" | "doctor" | null } | null);
-            } else {
-              setProfile(null);
-            }
-          }
-          setLoading(false);
-        }
-      } catch (err) {
-        console.error("Homepage session check failed:", err);
-        if (isMounted) {
-          setSession(null);
-          setLoading(false);
-        }
-      }
-    };
-
-    checkSession();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (isMounted) {
-        setSession(session);
-        if (session) {
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("name, role")
-            .eq("id", session.user.id)
-            .maybeSingle();
-          if (isMounted) setProfile(profile as { name: string | null; role: "patient" | "doctor" | null } | null);
-        } else {
-          setProfile(null);
-        }
-        setLoading(false);
-      }
-    });
-
-    return () => {
-      isMounted = false;
-      subscription.unsubscribe();
-    };
-  }, [supabase]);
 
 
 

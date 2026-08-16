@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
+import { useAuth } from "@/components/auth-provider"
 import {
   CalendarRange,
   Clock,
@@ -65,7 +66,18 @@ export function DoctorDashboardClient({
   greeting
 }: DoctorDashboardClientProps) {
   const router = useRouter()
+  const { signOut } = useAuth()
+  const [signingOut, setSigningOut] = useState(false)
   const [savedSchedule, setSavedSchedule] = useState<any[]>([])
+
+  const handleSignOut = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (signingOut) return
+    setSigningOut(true)
+    await signOut()
+    setSigningOut(false)
+    router.push("/")
+  }
   const [loadingSchedule, setLoadingSchedule] = useState(true)
   const [modalOpen, setModalOpen] = useState(false)
 
@@ -185,8 +197,10 @@ export function DoctorDashboardClient({
             <Button asChild variant="ghost" size="sm">
               <Link href="/profile">My Profile</Link>
             </Button>
-            <form action="/api/auth/logout" method="post">
-              <Button type="submit" variant="outline" size="sm">Sign out</Button>
+            <form onSubmit={handleSignOut}>
+              <Button type="submit" disabled={signingOut} variant="outline" size="sm">
+                {signingOut ? "Signing out..." : "Sign out"}
+              </Button>
             </form>
           </nav>
         </div>
