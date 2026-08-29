@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { NextResponse } from "next/server";
 import QRCode from "qrcode";
 import { pdf, Document, Page, Text, View, StyleSheet, Image } from "@react-pdf/renderer";

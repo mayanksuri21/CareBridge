@@ -1,12 +1,64 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Calendar, Clock, Video, AlertCircle, CheckCircle2, XCircle } from 'lucide-react';
 import Link from 'next/link';
+
+/** Returns true if a consultation's scheduled date+time is more than 30 minutes in the past. */
+function isConsultationPast(appt: any): boolean {
+  try {
+    const dStr = appt.appointment_date || appt.scheduled_date || appt.scheduled_at?.split('T')?.[0] || appt.scheduled_at?.split(' ')?.[0] || '';
+    if (!dStr) return false;
+    let parsedDate: Date | null = null;
+    if (dStr.includes('-')) {
+      const parts = dStr.split('-');
+      if (parts[0].length === 4) {
+        parsedDate = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+      } else {
+        parsedDate = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
+      }
+    } else if (dStr.includes('/')) {
+      const parts = dStr.split('/');
+      if (parts[2]?.length === 4) {
+        parsedDate = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
+      }
+    }
+    if (parsedDate && !isNaN(parsedDate.getTime())) {
+      const tStr = appt.time_slot || appt.scheduled_time || '';
+      let hours = 12, minutes = 0;
+      if (tStr) {
+        const timeParts = tStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
+        if (timeParts) {
+          hours = parseInt(timeParts[1], 10);
+          minutes = parseInt(timeParts[2], 10);
+          const ampm = timeParts[3].toUpperCase();
+          if (ampm === 'PM' && hours < 12) hours += 12;
+          if (ampm === 'AM' && hours === 12) hours = 0;
+        }
+      }
+      const scheduledDateTime = new Date(parsedDate.getFullYear(), parsedDate.getMonth(), parsedDate.getDate(), hours, minutes, 0, 0);
+      const now = new Date();
+      return now.getTime() > scheduledDateTime.getTime() + 30 * 60 * 1000;
+    }
+  } catch {}
+  return false;
+}
 
 export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
   const [appointments, setAppointments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dismissedApprovals, setDismissedApprovals] = useState<Set<string>>(new Set());
+
+  // Load dismissed approval notifications from localStorage on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('carebridge_dismissed_approvals');
+      if (stored) {
+        const ids: string[] = JSON.parse(stored);
+        setDismissedApprovals(new Set(ids));
+      }
+    } catch {}
+  }, []);
 
   const fetchConsultations = async () => {
     try {
@@ -75,22 +127,74 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
         // Filter by patient ID for safety and security
         if (patientId) {
           list = list.filter((a: any) => a.patient_id === patientId);
-        }
-
-        // Show pending, approved/scheduled, active, or rejected/declined appointments
+        }        // Show pending, approved/scheduled, active, or rejected/declined appointments
         const activeOnly = list.filter(
           (a: any) =>
             a.status === 'pending' ||
-            a.status === 'rejected' ||
-            a.status === 'declined' ||
-            a.status === 'scheduled' ||
-            a.status === 'booked' ||
-            a.status === 'doctor_in_room' ||
-            a.status === 'patient_waiting' ||
-            a.status === 'patient_admitted' ||
-            a.status === 'in_progress'
+            a.status === 'rejected' || a.status === 'declined' ||
+            a.status === 'scheduled' || a.status === 'booked' ||
+            a.status === 'doctor_in_room' || a.status === 'patient_waiting' ||
+            a.status === 'patient_admitted' || a.status === 'in_progress'
         );
-        setAppointments(activeOnly);
+
+        // Determine if a consultation's scheduled date+time is more than 30 minutes past
+        const isConsultationPast = (appt: any): boolean => {
+          try {
+            const dStr = appt.appointment_date || appt.scheduled_date || appt.scheduled_at?.split('T')?.[0] || appt.scheduled_at?.split(' ')?.[0] || '';
+            if (!dStr) return false;
+            let parsedDate: Date | null = null;
+            if (dStr.includes('-')) {
+              const parts = dStr.split('-');
+              if (parts[0].length === 4) {
+                parsedDate = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+              } else {
+                parsedDate = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
+              }
+            } else if (dStr.includes('/')) {
+              const parts = dStr.split('/');
+              if (parts[2]?.length === 4) {
+                parsedDate = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
+              }
+            }
+            if (parsedDate && !isNaN(parsedDate.getTime())) {
+              const tStr = appt.time_slot || appt.scheduled_time || '';
+              let hours = 12, minutes = 0;
+              if (tStr) {
+                const timeParts = tStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
+                if (timeParts) {
+                  hours = parseInt(timeParts[1], 10);
+                  minutes = parseInt(timeParts[2], 10);
+                  const ampm = timeParts[3].toUpperCase();
+                  if (ampm === 'PM' && hours < 12) hours += 12;
+                  if (ampm === 'AM' && hours === 12) hours = 0;
+                }
+              }
+              const scheduledDateTime = new Date(parsedDate.getFullYear(), parsedDate.getMonth(), parsedDate.getDate(), hours, minutes, 0, 0);
+              const now = new Date();
+              return now.getTime() > scheduledDateTime.getTime() + 30 * 60 * 1000;
+            }
+          } catch {}
+          return false;
+        };
+
+        const filtered = activeOnly.filter((a: any) => {
+          // Always show live/active consultations
+          if (a.status === 'doctor_in_room' || a.status === 'patient_waiting' ||
+              a.status === 'patient_admitted' || a.status === 'in_progress' || a.call_active) {
+            return true;
+          }
+          // Always show pending (awaiting doctor approval)
+          if (a.status === 'pending') {
+            return true;
+          }
+          // Always show rejected/declined (has existing Remove UI)
+          if (a.status === 'rejected' || a.status === 'declined' || a.status === 'cancelled') {
+            return true;
+          }
+          // For scheduled/booked: keep all (past ones will be displayed as "Missed")
+          return true;
+        });
+        setAppointments(filtered);
       } else {
         setAppointments([]);
       }
@@ -120,6 +224,15 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
     }
   };
 
+  const handleDismissApproval = useCallback((appointmentId: string) => {
+    setDismissedApprovals(prev => {
+      const next = new Set(prev);
+      next.add(appointmentId);
+      localStorage.setItem('carebridge_dismissed_approvals', JSON.stringify(Array.from(next)));
+      return next;
+    });
+  }, []);
+
   if (loading) {
     return <div className="text-slate-500 text-xs py-8 text-center animate-pulse">Loading consultations...</div>;
   }
@@ -137,7 +250,7 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
     : '';
 
   const approvedConsultations = appointments.filter(
-    a => (a.status === 'scheduled' || a.status === 'booked') && !a.call_active
+    a => (a.status === 'scheduled' || a.status === 'booked') && !a.call_active && !dismissedApprovals.has(a.id) && !isConsultationPast(a)
   );
 
   return (
@@ -173,6 +286,12 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
           <div key={`alert-${appt.id}`} className="p-4 rounded-2xl bg-emerald-955/40 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
             <span className="font-bold text-emerald-400 mr-1">✓ Approved:</span>
             Your consultation with Dr. {doctorName} for {date} {time} has been approved!
+            <button
+              onClick={() => handleDismissApproval(appt.id)}
+              className="ml-auto px-3 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 font-semibold transition-all cursor-pointer shrink-0"
+            >
+              OK
+            </button>
           </div>
         );
       })}
@@ -198,6 +317,7 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
             const isPending = appt.status === 'pending';
             const isRejected = appt.status === 'rejected' || appt.status === 'declined' || appt.status === 'cancelled';
             const isScheduled = appt.status === 'scheduled' || appt.status === 'booked';
+            const isMissed = isScheduled && !isLive && isConsultationPast(appt);
 
             // Resilient date/time check
             let isTimeReached = false;
@@ -277,7 +397,12 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
                           ⏳ Awaiting Doctor Approval
                         </span>
                       )}
-                      {isScheduled && !isLive && (
+                      {isMissed && (
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-red-500/10 text-red-400 border border-red-550/30 flex items-center gap-1">
+                          <XCircle className="w-3 h-3" /> ✕ Missed
+                        </span>
+                      )}
+                      {isScheduled && !isLive && !isMissed && (
                         <span className="px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-550/30 flex items-center gap-1">
                           <CheckCircle2 className="w-3 h-3" /> ✓ Confirmed & Scheduled
                         </span>
@@ -310,7 +435,12 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
                       </p>
                     )}
 
-                    {isScheduled && !isLive && (
+                    {isMissed && (
+                      <p className="text-xs text-red-300 bg-red-950/20 p-2.5 rounded-xl border border-red-900/30">
+                        This consultation was scheduled for {date} at {time} but was not attended.
+                      </p>
+                    )}
+                    {isScheduled && !isLive && !isMissed && (
                       <p className="text-xs text-slate-355 bg-slate-950/70 p-2.5 rounded-xl border border-slate-800/80">
                         Your consultation is confirmed with {doctorName.startsWith('Dr.') ? doctorName : `Dr. ${doctorName}`} for {date} at {time}.
                       </p>
@@ -324,7 +454,21 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
                   </div>
 
                   <div className="w-full md:w-auto">
-                    {isLive || (isScheduled && isTimeReached) ? (
+                    {isLive ? (
+                      <Link href={`/consultation/${appt.id}`}>
+                        <button className="w-full md:w-auto px-5 py-2.5 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-955 shadow-[0_0_15px_rgba(16,185,129,0.4)] animate-pulse flex items-center justify-center gap-2 transition-all cursor-pointer">
+                          <Video className="w-4 h-4" /> Join Video Call
+                        </button>
+                      </Link>
+                    ) : isMissed ? (
+                      <button
+                        disabled
+                        className="w-full md:w-auto px-4 py-2 rounded-xl text-xs font-medium bg-slate-955 text-red-400 border border-red-900/40 cursor-not-allowed flex items-center justify-center gap-2"
+                      >
+                        <XCircle className="w-3.5 h-3.5" />
+                        Session Missed
+                      </button>
+                    ) : isScheduled && isTimeReached ? (
                       <Link href={`/consultation/${appt.id}`}>
                         <button className="w-full md:w-auto px-5 py-2.5 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-955 shadow-[0_0_15px_rgba(16,185,129,0.4)] animate-pulse flex items-center justify-center gap-2 transition-all cursor-pointer">
                           <Video className="w-4 h-4" /> Join Consultation Room

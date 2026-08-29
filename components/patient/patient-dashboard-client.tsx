@@ -19,6 +19,62 @@ import { generatePrescriptionPDF, type PrintablePrescription } from "@/lib/gener
 import { Download } from "lucide-react"
 import { formatStableDateTime, formatStableDate } from "@/lib/utils"
 
+/** Returns true if a consultation's scheduled date+time is more than 30 minutes in the past. */
+function isConsultationPast(appt: any): boolean {
+  try {
+    const dStr = appt.appointment_date || appt.scheduled_date || appt.scheduled_at?.split('T')?.[0] || appt.scheduled_at?.split(' ')?.[0] || '';
+    if (!dStr) return false;
+    let parsedDate: Date | null = null;
+    if (dStr.includes('-')) {
+      const parts = dStr.split('-');
+      if (parts[0].length === 4) {
+        parsedDate = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+      } else {
+        parsedDate = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
+      }
+    } else if (dStr.includes('/')) {
+      const parts = dStr.split('/');
+      if (parts[2]?.length === 4) {
+        parsedDate = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
+      }
+    }
+    if (parsedDate && !isNaN(parsedDate.getTime())) {
+      const tStr = appt.time_slot || appt.scheduled_time || '';
+      let hours = 12, minutes = 0;
+      if (tStr) {
+        const timeParts = tStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
+        if (timeParts) {
+          hours = parseInt(timeParts[1], 10);
+          minutes = parseInt(timeParts[2], 10);
+          const ampm = timeParts[3].toUpperCase();
+          if (ampm === 'PM' && hours < 12) hours += 12;
+          if (ampm === 'AM' && hours === 12) hours = 0;
+        }
+      }
+      const scheduledDateTime = new Date(parsedDate.getFullYear(), parsedDate.getMonth(), parsedDate.getDate(), hours, minutes, 0, 0);
+      const now = new Date();
+      return now.getTime() > scheduledDateTime.getTime() + 30 * 60 * 1000;
+    }
+  } catch {}
+  return false;
+}
+
+/** Returns true if the appointment is a live/active consultation (not past, not just scheduled). */
+function isLiveConsultation(appt: any): boolean {
+  return appt.status === 'doctor_in_room' || appt.status === 'patient_waiting' ||
+    appt.status === 'patient_admitted' || appt.status === 'in_progress' || appt.call_active;
+}
+
+/** Filter out past scheduled/booked consultations — keep live, pending, and rejected/declined. */
+function filterOutPastConsultations(appts: any[]): any[] {
+  return appts.filter((a: any) => {
+    if (isLiveConsultation(a)) return true;
+    if (a.status === 'pending') return true;
+    if (a.status === 'rejected' || a.status === 'declined' || a.status === 'cancelled') return true;
+    return !isConsultationPast(a);
+  });
+}
+
 function formatAppointmentSlot(appt: any) {
   if (appt.appointment_date && appt.time_slot) {
     return `📅 ${appt.appointment_date}  ⏰ ${appt.time_slot}`
@@ -90,16 +146,18 @@ export function PatientDashboardClient({
     }
   }, [])
 
-  const upcomingCount = appointments.filter((appt) =>
+  const activeAppointments = filterOutPastConsultations(appointments)
+
+  const upcomingCount = activeAppointments.filter((appt) =>
     appt.status === "scheduled" || appt.status === "confirmed" || appt.status === "booked" || appt.status === "in_progress"
   ).length
 
-  const pendingCount = appointments.filter((appt) =>
+  const pendingCount = activeAppointments.filter((appt) =>
     appt.status === "pending"
   ).length
 
   const liveAppointment = appointments.find((appt) =>
-    appt.status === "in_progress" || appt.call_active
+    appt.status === "in_progress" || appt.status === "doctor_in_room" || appt.call_active
   )
 
   const greeting = (() => {
@@ -197,7 +255,7 @@ export function PatientDashboardClient({
         };
       });
 
-      setAppointments(list)
+      setAppointments(filterOutPastConsultations(list))
     } catch (err) {
       console.error(err)
       setAppointments([])
@@ -267,7 +325,7 @@ export function PatientDashboardClient({
               };
             });
 
-            setAppointments(list);
+            setAppointments(filterOutPastConsultations(list));
           }
         }
       } catch (err) {
@@ -424,12 +482,12 @@ export function PatientDashboardClient({
               <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-400 animate-ping" />
               <p className="text-sm font-bold text-white flex items-center gap-2">
                 <span>🚨</span>
-                <span>Dr. {liveAppointment.doctor?.name || liveAppointment.doctor_name || "Assigned Doctor"} is ready for your consultation!</span>
+                <span>{liveAppointment.status === "doctor_in_room" ? "Doctor has started your consultation!" : `Dr. ${liveAppointment.doctor?.name || liveAppointment.doctor_name || "Assigned Doctor"} is ready for your consultation!`}</span>
               </p>
             </div>
             <Button asChild size="sm" className="bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl shadow-lg shadow-emerald-500/25 px-5 py-2 animate-pulse text-xs font-bold shrink-0">
               <Link href={`/consultation/${liveAppointment.id}`}>
-                Join Call Now
+                Join Consultation
               </Link>
             </Button>
           </div>

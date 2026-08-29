@@ -4,6 +4,24 @@ import { createClient } from '@supabase/supabase-js';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
+function formatDate(iso: string) {
+  const d = new Date(iso);
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  return `${dd}-${mm}-${yyyy}`;
+}
+
+function formatTime(iso: string) {
+  const d = new Date(iso);
+  let hour = d.getHours();
+  const minute = String(d.getMinutes()).padStart(2, '0');
+  const meridiem = hour >= 12 ? 'PM' : 'AM';
+  hour = hour % 12;
+  if (hour === 0) hour = 12;
+  return `${hour}:${minute} ${meridiem}`;
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -15,16 +33,22 @@ export async function GET(request: Request) {
       { auth: { persistSession: false } }
     );
 
+    // appointments has no date/time columns of its own — it references a real
+    // slot row via slot_id. Join schedule_slots to get start_time/end_time.
     let query = supabase
       .from('appointments')
       .select(`
         id,
         doctor_id,
         patient_id,
+        slot_id,
         status,
         reason,
         created_at,
-        slot_id,
+        schedule_slots:slot_id (
+          start_time,
+          end_time
+        ),
         patient:profiles!patient_id (
           id,
           name,
@@ -32,7 +56,7 @@ export async function GET(request: Request) {
           phone
         )
       `)
-      .in('status', ['scheduled', 'pending', 'in_progress', 'booked', 'declined'])
+      .in('status', ['pending', 'booked'])
       .order('created_at', { ascending: false });
 
     if (doctorId) {
@@ -74,12 +98,21 @@ export async function GET(request: Request) {
         statusVal = 'declined';
       }
 
-      const dateMatch = cleanReason.match(/Selected Date:\s*([\w\d, -]+)/i) || cleanReason.match(/Preferred Date:\s*([\w\d, -]+)/i);
-      const timeMatch = cleanReason.match(/Time Slot:\s*([\w\d: ]+)/i);
-      const symptomsMatch = cleanReason.match(/Symptoms:\s*([\s\S]*)/i);
+      // Prefer the real slot timestamp; fall back to parsing the reason text
+      // (kept for any older appointments created before this fix existed).
+      let scheduledDate: string;
+      let scheduledTime: string;
+      if (appt.schedule_slots?.start_time) {
+        scheduledDate = formatDate(appt.schedule_slots.start_time);
+        scheduledTime = formatTime(appt.schedule_slots.start_time);
+      } else {
+        const dateMatch = cleanReason.match(/Selected Date:\s*([\w\d, -]+)/i) || cleanReason.match(/Preferred Date:\s*([\w\d, -]+)/i);
+        const timeMatch = cleanReason.match(/Time Slot:\s*([\w\d: ]+)/i);
+        scheduledDate = dateMatch ? dateMatch[1].trim() : '17-08-2026';
+        scheduledTime = timeMatch ? timeMatch[1].trim() : '12:00 PM';
+      }
 
-      const scheduledDate = dateMatch ? dateMatch[1].trim() : (appt.scheduled_date || appt.appointment_date || '17-08-2026');
-      const scheduledTime = timeMatch ? timeMatch[1].trim() : (appt.scheduled_time || appt.time_slot || '12:00 PM');
+      const symptomsMatch = cleanReason.match(/Symptoms:\s*([\s\S]*)/i);
       const symptomsText = symptomsMatch ? symptomsMatch[1].trim() : (appt.symptoms || '');
 
       return {

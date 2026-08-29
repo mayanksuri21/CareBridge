@@ -39,11 +39,38 @@ create table if not exists public.schedule_slots (
 -- Appointments
 create table if not exists public.appointments (
   id uuid primary key default gen_random_uuid(),
+
   patient_id uuid references public.profiles(id) on delete cascade,
   doctor_id uuid references public.doctors(id) on delete cascade,
   slot_id uuid references public.schedule_slots(id) on delete set null,
-  status text check (status in ('booked','completed','cancelled')) default 'booked',
+
+  patient_name text,
+  patient_email text,
+  phone text,
+
+  doctor_name text,
+
+  appointment_date date,
+  time_slot text,
+  scheduled_at timestamptz,
+
   reason text,
+  symptoms text,
+
+  status text
+    check (
+      status in (
+        'pending',
+        'awaiting_approval',
+        'scheduled',
+        'booked',
+        'completed',
+        'cancelled',
+        'declined'
+      )
+    )
+    default 'pending',
+
   created_at timestamptz default now()
 );
 
@@ -149,3 +176,5 @@ create policy "insert_authenticated" on public.appointments for insert with chec
 create policy "insert_slots" on public.schedule_slots for insert with check (auth.role() = 'authenticated');
 
 -- You should add more granular policies for production.
+
+

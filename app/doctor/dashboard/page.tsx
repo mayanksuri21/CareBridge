@@ -55,14 +55,32 @@ export default async function DoctorDashboard() {
     const isScheduled = appt.status === "scheduled" || appt.status === "confirmed" || appt.status === "booked"
     if (!isScheduled) return false
 
-    if (appt.appointment_date === todayStr) return true
-    if (appt.scheduled_at) {
+    let isToday = false
+    let apptDateTime: Date | null = null
+
+    if (appt.appointment_date === todayStr) {
+      isToday = true
+    }
+    if (!isToday && appt.scheduled_at) {
       const d = new Date(appt.scheduled_at)
       if (!Number.isNaN(d.getTime()) && d.toDateString() === todayDateStr) {
-        return true
+        isToday = true
+        apptDateTime = d
       }
     }
-    return false
+
+    if (!isToday) return false
+
+    // Exclude if more than 30 minutes past scheduled time
+    if (!apptDateTime && appt.scheduled_at) {
+      apptDateTime = new Date(appt.scheduled_at)
+    }
+    if (apptDateTime && !Number.isNaN(apptDateTime.getTime())) {
+      const now = new Date()
+      if (now.getTime() > apptDateTime.getTime() + 30 * 60 * 1000) return false
+    }
+
+    return true
   })
   const todayAppointments = todayScheduled.length
 

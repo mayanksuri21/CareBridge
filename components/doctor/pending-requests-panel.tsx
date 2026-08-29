@@ -16,6 +16,46 @@ import {
 } from "@/components/ui/dialog";
 import { PrescriptionModal } from "@/components/doctor/prescription-modal";
 
+/** Returns true if a consultation's scheduled date+time is more than 30 minutes in the past. */
+function isConsultationPast(appt: any): boolean {
+  try {
+    const dStr = appt.scheduled_date || appt.appointment_date || appt.scheduled_at?.split('T')?.[0] || appt.scheduled_at?.split(' ')?.[0] || '';
+    if (!dStr) return false;
+    let parsedDate: Date | null = null;
+    if (dStr.includes('-')) {
+      const parts = dStr.split('-');
+      if (parts[0].length === 4) {
+        parsedDate = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+      } else {
+        parsedDate = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
+      }
+    } else if (dStr.includes('/')) {
+      const parts = dStr.split('/');
+      if (parts[2]?.length === 4) {
+        parsedDate = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
+      }
+    }
+    if (parsedDate && !isNaN(parsedDate.getTime())) {
+      const tStr = appt.scheduled_time || appt.time_slot || '';
+      let hours = 12, minutes = 0;
+      if (tStr) {
+        const timeParts = tStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
+        if (timeParts) {
+          hours = parseInt(timeParts[1], 10);
+          minutes = parseInt(timeParts[2], 10);
+          const ampm = timeParts[3].toUpperCase();
+          if (ampm === 'PM' && hours < 12) hours += 12;
+          if (ampm === 'AM' && hours === 12) hours = 0;
+        }
+      }
+      const scheduledDateTime = new Date(parsedDate.getFullYear(), parsedDate.getMonth(), parsedDate.getDate(), hours, minutes, 0, 0);
+      const now = new Date();
+      return now.getTime() > scheduledDateTime.getTime() + 30 * 60 * 1000;
+    }
+  } catch {}
+  return false;
+}
+
 export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
   const [requests, setRequests] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -31,7 +71,8 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
     try {
       setLoading(true);
       const cacheBust = Date.now();
-      const res = await fetch(`/api/doctor/appointments?_t=${cacheBust}`, {
+      const doctorParam = doctorId ? `&doctor_id=${encodeURIComponent(doctorId)}` : "";
+      const res = await fetch(`/api/doctor/appointments?_t=${cacheBust}${doctorParam}`, {
         cache: "no-store",
         headers: {
           'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -97,13 +138,22 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
 
       // Keep active requests (scheduled, pending, or uncompleted)
       const active = filteredList.filter(
-        (a: any) =>
-          a.status === "pending" ||
-          a.status === "scheduled" ||
-          a.status === "doctor_in_room" ||
-          a.status === "patient_waiting" ||
-          a.status === "patient_admitted" ||
-          a.status === "in_progress"
+        (a: any) => {
+          // Always keep live/active consultations
+          if (a.status === "doctor_in_room" || a.status === "patient_waiting" ||
+              a.status === "patient_admitted" || a.status === "in_progress") {
+            return true;
+          }
+          // Always keep pending (awaiting doctor action)
+          if (a.status === "pending") {
+            return true;
+          }
+          // For scheduled: keep all (past ones will be displayed as "Missed")
+          if (a.status === "scheduled") {
+            return true;
+          }
+          return false;
+        }
       );
       setRequests(active);
     } catch (e) {
@@ -267,7 +317,12 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
                           <AlertCircle className="w-3 h-3" /> 🟡 Pending
                         </span>
                       )}
-                      {scheduled && (
+                      {scheduled && isConsultationPast(req) && (
+                        <span className="text-[11px] px-2.5 py-0.5 rounded-md bg-red-950/80 text-red-400 border border-red-800/60 uppercase font-semibold flex items-center gap-1">
+                          <XCircle className="w-3 h-3" /> ✕ Missed
+                        </span>
+                      )}
+                      {scheduled && !isConsultationPast(req) && (
                         <span className="text-[11px] px-2.5 py-0.5 rounded-md bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 uppercase font-semibold flex items-center gap-1">
                           <CheckCircle2 className="w-3 h-3" /> Scheduled
                         </span>
