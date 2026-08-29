@@ -497,7 +497,21 @@ export default function ConsultationRoom() {
   }
 
   if (isDeclinedStatus) {
-    const declineReason = appointment.reason_notes || 'The doctor was unable to accept this consultation request at the requested time.';
+    let declineReason = '';
+    if (appointment.reason) {
+      const bracketMatch = appointment.reason.match(/\[Declined:\s*([^\]]+)\]/i);
+      if (bracketMatch) {
+        declineReason = bracketMatch[1].trim();
+      } else {
+        const pipeMatch = appointment.reason.match(/\|\s*Declined:\s*(.+)$/i);
+        if (pipeMatch) {
+          declineReason = pipeMatch[1].trim();
+        }
+      }
+    }
+    if (!declineReason) {
+      declineReason = 'No reason provided';
+    }
     return (
       <div className="min-h-screen bg-[#070b14] text-white flex flex-col items-center justify-center font-sans p-6 text-center">
         <div className="w-16 h-16 rounded-full bg-rose-500/10 border border-rose-500/40 flex items-center justify-center mb-6">

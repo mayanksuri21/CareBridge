@@ -362,15 +362,20 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
               console.warn("Date parsing error:", err);
             }
 
-            let declineReasonText = appt.reason_notes || appt.decline_reason;
-            if (!declineReasonText && appt.reason) {
-              const match = appt.reason.match(/\[Declined:\s*([^\]]+)\]/i);
-              if (match) {
-                declineReasonText = match[1].trim();
+            let declineReasonText = '';
+            if (appt.reason) {
+              const bracketMatch = appt.reason.match(/\[Declined:\s*([^\]]+)\]/i);
+              if (bracketMatch) {
+                declineReasonText = bracketMatch[1].trim();
+              } else {
+                const pipeMatch = appt.reason.match(/\|\s*Declined:\s*(.+)$/i);
+                if (pipeMatch) {
+                  declineReasonText = pipeMatch[1].trim();
+                }
               }
             }
             if (!declineReasonText) {
-              declineReasonText = 'Doctor is unavailable at the requested time.';
+              declineReasonText = 'No reason provided';
             }
 
             return (

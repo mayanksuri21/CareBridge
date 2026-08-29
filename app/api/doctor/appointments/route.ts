@@ -45,10 +45,14 @@ export async function GET(request: Request) {
         status,
         reason,
         created_at,
+        appointment_date,
+        time_slot,
         schedule_slots:slot_id (
           start_time,
           end_time
         ),
+        patient_name,
+        patient_email,
         patient:profiles!patient_id (
           id,
           name,
@@ -56,7 +60,7 @@ export async function GET(request: Request) {
           phone
         )
       `)
-      .in('status', ['pending', 'booked'])
+      .in('status', ['pending', 'booked', 'scheduled', 'cancelled'])
       .order('created_at', { ascending: false });
 
     if (doctorId) {

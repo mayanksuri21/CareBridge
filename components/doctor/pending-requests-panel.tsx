@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { Calendar, Clock, Video, RefreshCw, MessageSquare, AlertCircle, CheckCircle2, XCircle, FileText, Loader2 } from "lucide-react";
+import { Calendar, Clock, Video, RefreshCw, MessageSquare, AlertCircle, CheckCircle2, XCircle, FileText, Loader2, CalendarCheck } from "lucide-react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -58,6 +58,7 @@ function isConsultationPast(appt: any): boolean {
 
 export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
   const [requests, setRequests] = useState<any[]>([]);
+  const [confirmedConsultations, setConfirmedConsultations] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [workingId, setWorkingId] = useState<string | null>(null);
 
@@ -136,26 +137,17 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
         };
       });
 
-      // Keep active requests (scheduled, pending, or uncompleted)
-      const active = filteredList.filter(
-        (a: any) => {
-          // Always keep live/active consultations
-          if (a.status === "doctor_in_room" || a.status === "patient_waiting" ||
-              a.status === "patient_admitted" || a.status === "in_progress") {
-            return true;
-          }
-          // Always keep pending (awaiting doctor action)
-          if (a.status === "pending") {
-            return true;
-          }
-          // For scheduled: keep all (past ones will be displayed as "Missed")
-          if (a.status === "scheduled") {
-            return true;
-          }
-          return false;
-        }
+      // Split into pending vs confirmed
+      const pending = filteredList.filter(
+        (a: any) => a.status === "pending"
       );
-      setRequests(active);
+      const confirmed = filteredList.filter(
+        (a: any) => a.status === "scheduled" ||
+          a.status === "doctor_in_room" || a.status === "patient_waiting" ||
+          a.status === "patient_admitted" || a.status === "in_progress"
+      );
+      setRequests(pending);
+      setConfirmedConsultations(confirmed);
     } catch (e) {
       console.error("Fetch pending requests error:", e);
     } finally {
@@ -187,11 +179,12 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
       }
 
       toast.success("Request approved and scheduled.");
-      setRequests((prev) =>
-        prev.map((a) =>
-          a.id === appointmentId ? { ...a, status: 'scheduled' } : a
-        )
-      );
+      // Move from pending to confirmed
+      setRequests((prev) => prev.filter((a) => a.id !== appointmentId));
+      setConfirmedConsultations((prev) => [
+        ...prev,
+        { ...requests.find((a) => a.id === appointmentId), status: 'scheduled' }
+      ]);
     } catch (err) {
       console.error(err);
       toast.error("Could not approve this request. Please try again.");
@@ -222,27 +215,62 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
       return;
     }
 
-    setDeclineOpen(false);
-    setWorkingId(declineId);
+    const capturedDeclineId = declineId;
+    setWorkingId(capturedDeclineId);
+
+    console.log("[decline] appointment ID:", capturedDeclineId);
+    console.log("[decline] selected reason:", declineReasonOption);
+    console.log("[decline] custom reason:", declineCustomReason);
+    console.log("[decline] final reason:", finalReason);
+    console.log("[decline] API endpoint: POST /api/doctor/appointments/decline");
+
     try {
-      const response = await fetch('/api/appointments/status', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          appointment_id: declineId,
-          status: 'cancelled',
-          reason_notes: finalReason
-        }),
-      });
-      if (!response.ok) {
-        const payload = await response.json();
-        throw new Error(payload.error || "Failed to decline appointment");
+      const payload = {
+        appointment_id: capturedDeclineId,
+        decline_reason: finalReason
+      };
+      console.log("[decline] payload:", payload);
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+      let response: Response;
+      try {
+        response = await fetch('/api/doctor/appointments/decline', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+      } catch (fetchErr: any) {
+        if (fetchErr?.name === 'AbortError') {
+          throw new Error("Server took too long to respond. Please try again.");
+        }
+        throw fetchErr;
+      } finally {
+        clearTimeout(timeoutId);
       }
 
+      console.log("[decline] API response status:", response.status);
+      const responseBody = await response.json().catch(() => ({}));
+      console.log("[decline] API response body:", responseBody);
+
+      if (!response.ok) {
+        throw new Error(responseBody.error || "Failed to decline appointment");
+      }
+
+      if (!responseBody.success) {
+        throw new Error(responseBody.error || "Decline request was not successful");
+      }
+
+      console.log("[decline] update successful, updating local state");
+      setDeclineOpen(false);
       toast.success("Appointment declined successfully");
-      setRequests((prev) => prev.filter((a) => a.id !== declineId));
+      setRequests((prev) => prev.filter((a) => a.id !== capturedDeclineId));
+      setConfirmedConsultations((prev) => prev.filter((a) => a.id !== capturedDeclineId));
+      console.log("[decline] completed");
     } catch (err: any) {
-      console.error(err);
+      console.error("[decline] failed:", err);
       toast.error(err.message || "Could not decline this request. Please try again.");
     } finally {
       setWorkingId(null);
@@ -257,13 +285,14 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
   return (
     <div className="bg-[#111927]/90 border border-slate-800/80 rounded-2xl p-6 backdrop-blur-md flex flex-col justify-between min-h-[340px] font-sans">
       <div>
+        {/* INCOMING REQUESTS SECTION */}
         <div className="flex items-center justify-between mb-1.5">
           <div className="flex items-center gap-2.5">
             <MessageSquare className="w-5 h-5 text-emerald-400" />
             <h3 className="text-base font-bold text-slate-100">Incoming Consultation Requests</h3>
             {requests.length > 0 && (
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                {requests.length} Active
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                {requests.length} Pending
               </span>
             )}
           </div>
@@ -275,11 +304,11 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
           </button>
         </div>
         <p className="text-xs text-slate-400 mb-5 leading-relaxed">
-          Review patient requests, approve or decline consultations, and begin video calls.
+          Review patient requests, approve or decline consultations.
         </p>
 
         {requests.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-10 px-4 bg-[#0a0f1d]/80 border border-slate-800/70 rounded-xl text-center">
+          <div className="flex flex-col items-center justify-center py-10 px-4 bg-[#0a0f1d]/80 border border-slate-800/70 rounded-xl text-center mb-6">
             <div className="w-12 h-12 rounded-full bg-emerald-955/65 border border-emerald-500/30 flex items-center justify-center mb-3 shadow-[0_0_20px_rgba(16,185,129,0.15)]">
               <svg className="w-6 h-6 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
@@ -296,11 +325,108 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
             </Link>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-3 mb-6">
             {requests.map((req) => {
-              const pending = req.status === "pending";
-              const scheduled = req.status === "scheduled" || req.status === "doctor_in_room" || req.status === "patient_waiting" || req.status === "patient_admitted" || req.status === "in_progress";
               const isWorking = workingId === req.id;
+
+              return (
+                <div
+                  key={req.id}
+                  className="p-4 bg-[#0a0f1d]/90 border border-slate-800/90 hover:border-amber-500/40 rounded-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4 transition shadow-lg"
+                >
+                  <div className="space-y-1.5 flex-1">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-sm font-bold text-white">
+                        {req.patient_name || req.patient?.name || req.patient_email || req.patient?.email || "Patient"}
+                      </span>
+                      <span className="text-[11px] px-2.5 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase font-semibold flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" /> 🟡 Pending
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-4 text-xs text-slate-300">
+                      <span className="flex items-center gap-1.5">
+                        <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                        {req.scheduled_date || req.scheduled_at?.split("T")?.[0] || req.scheduled_at?.split(" ")?.[0] || "TBD"}
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-slate-400" />
+                        {req.scheduled_time || req.scheduled_at?.split(" ")?.[1] || "TBD"}
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-slate-300 bg-slate-950/80 p-2.5 rounded-lg border border-slate-800/70 mt-1">
+                      <strong className="text-slate-400">Reason:</strong> {req.reason || "General Consultation"}
+                      {req.symptoms ? ` | Symptoms: ${req.symptoms}` : ""}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() => handleApprove(req.id)}
+                      disabled={isWorking}
+                      className="gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold"
+                    >
+                      {isWorking ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="w-4 h-4" />
+                      )}
+                      {isWorking ? 'Approving...' : 'Approve'}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => handleDeclineClick(req.id)}
+                      disabled={isWorking}
+                      className="gap-1.5 bg-red-650 hover:bg-red-600 text-white rounded-xl font-medium"
+                    >
+                      {isWorking ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <XCircle className="w-4 h-4" />
+                      )}
+                      {isWorking ? 'Declining...' : 'Decline'}
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* CONFIRMED CONSULTATIONS SECTION */}
+        <div className="flex items-center justify-between mb-1.5">
+          <div className="flex items-center gap-2.5">
+            <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+            <h3 className="text-base font-bold text-slate-100">Confirmed Consultations</h3>
+            {confirmedConsultations.length > 0 && (
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                {confirmedConsultations.length} Confirmed
+              </span>
+            )}
+          </div>
+        </div>
+        <p className="text-xs text-slate-400 mb-5 leading-relaxed">
+          Approved consultations ready to begin. Start a video call when the patient joins.
+        </p>
+
+        {confirmedConsultations.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-10 px-4 bg-[#0a0f1d]/80 border border-slate-800/70 rounded-xl text-center">
+            <div className="w-12 h-12 rounded-full bg-emerald-955/65 border border-emerald-500/30 flex items-center justify-center mb-3 shadow-[0_0_20px_rgba(16,185,129,0.15)]">
+              <CalendarCheck className="w-6 h-6 text-emerald-400" />
+            </div>
+            <h4 className="text-sm font-semibold text-slate-200 mb-1">No confirmed consultations</h4>
+            <p className="text-xs text-slate-400 max-w-sm mt-1 leading-relaxed">
+              Approved consultations will appear here. Approve a pending request to get started.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {confirmedConsultations.map((req) => {
+              const isWorking = workingId === req.id;
+              const isPast = isConsultationPast(req);
 
               return (
                 <div
@@ -312,19 +438,13 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
                       <span className="text-sm font-bold text-white">
                         {req.patient_name || req.patient?.name || req.patient_email || req.patient?.email || "Patient"}
                       </span>
-                      {pending && (
-                        <span className="text-[11px] px-2.5 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase font-semibold flex items-center gap-1">
-                          <AlertCircle className="w-3 h-3" /> 🟡 Pending
-                        </span>
-                      )}
-                      {scheduled && isConsultationPast(req) && (
+                      {isPast ? (
                         <span className="text-[11px] px-2.5 py-0.5 rounded-md bg-red-950/80 text-red-400 border border-red-800/60 uppercase font-semibold flex items-center gap-1">
                           <XCircle className="w-3 h-3" /> ✕ Missed
                         </span>
-                      )}
-                      {scheduled && !isConsultationPast(req) && (
+                      ) : (
                         <span className="text-[11px] px-2.5 py-0.5 rounded-md bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 uppercase font-semibold flex items-center gap-1">
-                          <CheckCircle2 className="w-3 h-3" /> Scheduled
+                          <CheckCircle2 className="w-3 h-3" /> Confirmed
                         </span>
                       )}
                     </div>
@@ -332,11 +452,11 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
                     <div className="flex items-center gap-4 text-xs text-slate-300">
                       <span className="flex items-center gap-1.5">
                         <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                        {req.scheduled_date || req.scheduled_at?.split("T")?.[0] || req.scheduled_at?.split(" ")?.[0] || "17-08-2026"}
+                        {req.scheduled_date || req.scheduled_at?.split("T")?.[0] || req.scheduled_at?.split(" ")?.[0] || "TBD"}
                       </span>
                       <span className="flex items-center gap-1.5">
                         <Clock className="w-3.5 h-3.5 text-slate-400" />
-                        {req.scheduled_time || req.scheduled_at?.split(" ")?.[1] || "12:00 PM"}
+                        {req.scheduled_time || req.scheduled_at?.split(" ")?.[1] || "TBD"}
                       </span>
                     </div>
 
@@ -347,61 +467,28 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    {pending && (
-                      <>
-                        <Button
-                          size="sm"
-                          onClick={() => handleApprove(req.id)}
-                          disabled={isWorking}
-                          className="gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold"
-                        >
-                          {isWorking ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <CheckCircle2 className="w-4 h-4" />
-                          )}
-                          {isWorking ? 'Approving...' : 'Approve'}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => handleDeclineClick(req.id)}
-                          disabled={isWorking}
-                          className="gap-1.5 bg-red-650 hover:bg-red-600 text-white rounded-xl font-medium"
-                        >
-                          {isWorking ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <XCircle className="w-4 h-4" />
-                          )}
-                          {isWorking ? 'Declining...' : 'Decline'}
-                        </Button>
-                      </>
+                    {!isPast && (
+                      <Button
+                        onClick={() => handleStartConsultation(req.id)}
+                        className="px-5 py-2.5 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.3)] flex items-center justify-center gap-2 transition cursor-pointer"
+                      >
+                        <Video className="w-4 h-4" /> Start Consultation
+                      </Button>
                     )}
-                    {scheduled && (
-                      <>
-                        <Button
-                          onClick={() => handleStartConsultation(req.id)}
-                          className="w-full md:w-auto px-5 py-2.5 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.3)] flex items-center justify-center gap-2 transition cursor-pointer"
-                        >
-                          <Video className="w-4 h-4" /> Start Consultation
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => handleDeclineClick(req.id)}
-                          disabled={isWorking}
-                          className="gap-1.5 bg-red-650 hover:bg-red-600 text-white rounded-xl font-medium"
-                        >
-                          {isWorking ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <XCircle className="w-4 h-4" />
-                          )}
-                          {isWorking ? 'Declining...' : 'Decline'}
-                        </Button>
-                      </>
-                    )}
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => handleDeclineClick(req.id)}
+                      disabled={isWorking}
+                      className="gap-1.5 bg-red-650 hover:bg-red-600 text-white rounded-xl font-medium"
+                    >
+                      {isWorking ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <XCircle className="w-4 h-4" />
+                      )}
+                      {isWorking ? 'Declining...' : 'Decline'}
+                    </Button>
                   </div>
                 </div>
               );
@@ -456,6 +543,7 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
               Cancel
             </Button>
             <Button
+              type="button"
               variant="destructive"
               onClick={handleConfirmDecline}
               disabled={!declineReasonOption || (declineReasonOption === "Other" && !declineCustomReason.trim())}

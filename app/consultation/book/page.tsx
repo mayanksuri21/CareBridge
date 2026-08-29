@@ -35,6 +35,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { useAuth } from "@/components/auth-provider";
 
 type VerificationStatus = "pending" | "approved" | "rejected" | null;
 
@@ -181,6 +182,7 @@ const parseDateToDay = (dateStr: string): number => {
 export default function BookConsultationPage() {
   const router = useRouter();
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+  const { user, profile: authProfile, loading: authLoading } = useAuth();
   const [doctors, setDoctors] = useState<DoctorRow[]>([]);
   const [doctorsLoading, setDoctorsLoading] = useState(true);
   const [selectedDoctor, setSelectedDoctor] = useState<string>("");
@@ -198,6 +200,18 @@ export default function BookConsultationPage() {
   const [dateSlotsLoading, setDateSlotsLoading] = useState(false);
   const [bookedSlotsForDate, setBookedSlotsForDate] = useState<string[]>([]);
   const [noSlotsMessage, setNoSlotsMessage] = useState("");
+
+  // Populate form fields from auth profile whenever it becomes available.
+  // This fires on mount and whenever authProfile changes (e.g. navigating
+  // back to this page without a full browser refresh).
+  useEffect(() => {
+    if (authProfile) {
+      if (authProfile.name) setName(authProfile.name);
+    }
+    if (user?.email) {
+      setEmail(user.email);
+    }
+  }, [authProfile, user]);
 
   // Check availability whenever selectedDate or selectedDoctor changes
   useEffect(() => {
@@ -341,29 +355,6 @@ export default function BookConsultationPage() {
     };
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (cancelled || !user) return;
-      if (user.email) setEmail(user.email);
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("name, email, phone")
-        .eq("id", user.id)
-        .maybeSingle();
-      if (cancelled || !profile) return;
-      if (profile.name) setName(profile.name);
-      if (profile.email && !email) setEmail(profile.email);
-      if (profile.phone) setPhone(profile.phone);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [supabase, email]);
-
   const handleBook = useCallback(async () => {
     if (
       !selectedDoctor ||
@@ -386,19 +377,11 @@ export default function BookConsultationPage() {
         label: "12:00 PM",
       };
 
-      console.log("[handleBook] step 1: preparing booking request");
-
-      const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser();
-
-      if (userError) {
-        console.error("[handleBook] user error:", userError);
-        throw new Error(
-          "Unable to verify your login session. Please sign in again.",
-        );
-      }
+      // ── Step 1: Resolve authenticated user ──────────────────────────
+      // Use user.id from AuthProvider context directly. This avoids
+      // calling supabase.auth.getSession() which can hang indefinitely
+      // if the token refresh network call fails or times out.
+      console.log("[handleBook] resolving authenticated user");
 
       const patientId = user?.id || null;
 
@@ -410,17 +393,94 @@ export default function BookConsultationPage() {
 
       console.log("[handleBook] authenticated patientId:", patientId);
 
-      console.log("[handleBook] step 2: booking data prepared");
+      // ── Step 2: Resolve patient profile ─────────────────────────────
+      // Use profile from AuthProvider context as primary source.
+      // Only fall back to a direct Supabase query with a bounded
+      // timeout if the profile data is incomplete.
+      console.log("[handleBook] resolving patient profile");
 
+      let patientName = authProfile?.name || "";
+      let patientEmail = user?.email || "";
+
+      // If name or email are still missing, fetch the profile directly
+      // with a bounded timeout to prevent hanging.
+      if (!patientName || !patientEmail) {
+        try {
+          const profilePromise = supabase
+            .from("profiles")
+            .select("name, email, phone")
+            .eq("id", patientId)
+            .maybeSingle();
+
+          const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    "Profile lookup timed out. Please try again.",
+                  ),
+                ),
+              5000,
+            ),
+          );
+
+          const { data: profile, error: profileError } = (await Promise.race([
+            profilePromise,
+            timeoutPromise,
+          ])) as Awaited<typeof profilePromise>;
+
+          if (profileError) {
+            console.error(
+              "[handleBook] profile fetch error:",
+              profileError,
+            );
+          }
+
+          if (profile) {
+            if (!patientName) patientName = profile.name || "";
+            if (!patientEmail) patientEmail = profile.email || "";
+            if (!phone && profile.phone) setPhone(profile.phone);
+          }
+        } catch (profileErr: any) {
+          console.error(
+            "[handleBook] profile resolution failed:",
+            profileErr,
+          );
+          // If the timeout fired, this will throw the timeout error
+          throw profileErr;
+        }
+      }
+
+      console.log("[handleBook] patient profile resolved:", {
+        patientName,
+        patientEmail,
+      });
+
+      // ── Step 3: Validate resolved values ────────────────────────────
+      if (!patientName) {
+        throw new Error(
+          "Could not resolve your patient name. Please ensure your profile is complete and try again.",
+        );
+      }
+      if (!patientEmail) {
+        throw new Error(
+          "Could not resolve your email address. Please ensure your profile is complete and try again.",
+        );
+      }
+
+      console.log("[handleBook] final patient name:", patientName);
+      console.log("[handleBook] final patient email:", patientEmail);
+
+      // ── Step 4: Construct payload ───────────────────────────────────
       const payload = {
         id: appointmentId,
         patient_id: patientId,
         doctor_id: selectedDoctor,
         doctor_name: selectedDoctorData?.name || "Dr. Rahul Sharma",
 
-        patient_name: name || "Suman Suri",
-        patient_email: email || "sumansuri0214@gmail.com",
-        phone: phone || "+91 98000 12345",
+        patient_name: patientName,
+        patient_email: patientEmail,
+        phone: phone || null,
 
         appointment_date: selectedDate,
         time_slot: slot.label,
@@ -431,17 +491,13 @@ export default function BookConsultationPage() {
         status: "pending",
       };
 
-      console.log("[handleBook] FINAL patient_id:", payload.patient_id);
+      console.log("[handleBook] sending appointment request");
       console.log("[handleBook] FINAL PAYLOAD:", payload);
-      // 3-second timeout: if the API does not respond within this window, abort
-      // the fetch so the button never stays frozen on "Submitting...".
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
 
-      console.log(
-        "[handleBook] step 3: sending request to /api/appointments/create",
-        payload,
-      );
+      // ── Step 5: POST to API ─────────────────────────────────────────
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
       let res: Response;
       try {
         res = await fetch("/api/appointments/create", {
@@ -458,7 +514,8 @@ export default function BookConsultationPage() {
       } finally {
         clearTimeout(timeoutId);
       }
-      console.log("[handleBook] step 4: response received", res.status);
+
+      console.log("[handleBook] response received", res.status);
 
       // 409: another patient grabbed this slot between display and submission.
       if (res.status === 409) {
@@ -472,7 +529,7 @@ export default function BookConsultationPage() {
       }
 
       // 200/201 — booking accepted.
-      console.log("[handleBook] step 5: booking succeeded");
+      console.log("[handleBook] booking succeeded");
       setBooked(appointmentId);
       toast.success("Consultation request submitted successfully!");
     } catch (err: any) {
@@ -487,12 +544,12 @@ export default function BookConsultationPage() {
     selectedSlotIndex,
     reason,
     symptoms,
-    name,
-    email,
     phone,
     selectedDoctorData,
     activeSlotsForSelectedDoctor,
     supabase,
+    authProfile,
+    user,
   ]);
 
   const resetForm = useCallback(() => {
@@ -881,7 +938,8 @@ export default function BookConsultationPage() {
                         booking ||
                         !!booked ||
                         noSlotsConfigured ||
-                        isLeave
+                        isLeave ||
+                        authLoading
                       }
                       className="gap-2"
                     >

@@ -8,7 +8,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const appointmentId = body.appointment_id || body.appointmentId;
     const status = body.status;
-    const decline_reason = body.reason_notes || body.decline_reason;
+    console.log("[status-api] received request:", { appointmentId, status });
 
     if (!appointmentId) {
       return NextResponse.json({ error: "Missing appointmentId" }, { status: 400 });
@@ -20,11 +20,13 @@ export async function POST(request: Request) {
       { auth: { persistSession: false } }
     );
 
+    console.log("[status-api] fetching current appointment");
     const { data: currentAppt, error: fetchErr } = await supabase
       .from('appointments')
       .select('reason, status')
       .eq('id', appointmentId)
       .maybeSingle();
+    console.log("[status-api] current appointment:", currentAppt, "error:", fetchErr?.message);
 
     if (fetchErr) {
       console.error("Fetch current appointment error:", fetchErr.message);
@@ -37,7 +39,7 @@ export async function POST(request: Request) {
     if (status === 'scheduled') {
       dbStatus = 'scheduled';
     } else if (status === 'rejected' || status === 'declined' || status === 'cancelled') {
-      dbStatus = 'declined';
+      dbStatus = 'cancelled';
     }
 
     const updatePayload: any = { 
@@ -45,50 +47,52 @@ export async function POST(request: Request) {
       reason: reasonVal
     };
 
-    if (decline_reason) {
-      updatePayload.reason_notes = decline_reason;
-    }
-
+    console.log("[status-api] executing update:", updatePayload);
     let { data, error } = await supabase
       .from('appointments')
       .update(updatePayload)
       .eq('id', appointmentId)
       .select()
       .maybeSingle();
+    console.log("[status-api] update result:", { data: !!data, error: error?.message, code: error?.code });
 
     if (error && (error.message.includes("check constraint") || error.code === "23514")) {
-      console.warn("status violates DB constraint, trying fallback mapping...");
+      console.warn("[status-api] status violates DB constraint, trying fallback mapping...");
       let fallbackStatus = dbStatus;
       if (dbStatus === 'scheduled') fallbackStatus = 'booked';
-      if (dbStatus === 'declined') fallbackStatus = 'cancelled';
+      if (dbStatus === 'cancelled' || dbStatus === 'declined') fallbackStatus = 'cancelled';
       
+      const fallbackPayload: any = { ...updatePayload, status: fallbackStatus };
       const fallback = await supabase
         .from('appointments')
-        .update({ ...updatePayload, status: fallbackStatus })
+        .update(fallbackPayload)
         .eq('id', appointmentId)
         .select()
         .maybeSingle();
       error = fallback.error;
       data = fallback.data;
       if (!error) dbStatus = fallbackStatus;
+      console.log("[status-api] constraint fallback result:", { data: !!data, error: error?.message, dbStatus });
     }
 
     if (!error && !data) {
+      console.log("[status-api] no data returned, verifying...");
       const { data: verifyData } = await supabase
         .from('appointments')
-        .select('status, reason, reason_notes, updated_at')
+        .select('status, reason, updated_at')
         .eq('id', appointmentId)
         .maybeSingle();
       if (verifyData) data = verifyData as any;
+      console.log("[status-api] verify result:", { data: !!data });
     }
 
     if (error) {
-      console.error("Update status error:", error.message);
+      console.error("[status-api] Update status error:", error.message, error.code);
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
     if (!data) {
-      console.error("Update status failed: no rows matched for id:", appointmentId);
+      console.error("[status-api] Update status failed: no rows matched for id:", appointmentId);
       return NextResponse.json({ error: "Appointment not found or could not be updated" }, { status: 404 });
     }
 
@@ -101,9 +105,10 @@ export async function POST(request: Request) {
       status: frontendStatus
     };
 
+    console.log("[status-api] success:", responseAppointment.status);
     return NextResponse.json({ success: true, appointment: responseAppointment });
   } catch (err: any) {
-    console.error("Status update catch block error:", err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    console.error("[status-api] catch block error:", err);
+    return NextResponse.json({ error: err.message || "Internal server error" }, { status: 500 });
   }
 }
