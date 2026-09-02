@@ -9,7 +9,9 @@ function getAdminClient() {
   return createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 }
 
-// GET: Load Doctor's Saved Schedule
+// GET: Load Doctor's Saved Schedule — read ONLY from profiles.schedule_presets
+// (the stable recurring template), never from schedule_slots which holds
+// individual bookable instances.
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -21,27 +23,10 @@ export async function GET(request: Request) {
 
     const supabase = getAdminClient();
 
-    // 1. Try reading from schedule_slots
-    const { data: slots } = await supabase
-      .from('schedule_slots')
-      .select('*')
-      .eq('doctor_id', doctorId);
-
-    if (slots && slots.length > 0) {
-      // Group slots by interval/doctor
-      const formatted = [
-        {
-          interval: 'Monday to Friday',
-          slots: slots.map((s: any) => s.start_time || s.slots || s.slot_time).filter(Boolean)
-        }
-      ];
-      return NextResponse.json({ presets: formatted });
-    }
-
-    // 2. Try reading from profiles table (flexible check)
+    // Read from the profiles table — this is the stable template store.
     const { data: profile } = await supabase
       .from('profiles')
-      .select('*')
+      .select('schedule_presets, schedule_config')
       .eq('id', doctorId)
       .maybeSingle();
 
@@ -60,7 +45,9 @@ export async function GET(request: Request) {
   }
 }
 
-// POST: Save Doctor Availability without failing (Safe Multi-strategy Write)
+// POST: Save Doctor Availability — write ONLY to profiles.schedule_presets.
+// schedule_slots is reserved for individual bookable instances created during
+// booking and must NOT be overwritten with template data.
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -73,44 +60,20 @@ export async function POST(request: Request) {
     const supabase = getAdminClient();
     const targetPresets = Array.isArray(presets) ? presets : [presets];
 
-    // Strategy 1: Attempt to write to schedule_slots table safely
-    try {
-      await supabase.from('schedule_slots').delete().eq('doctor_id', doctor_id);
-      
-      const flatSlots: string[] = [];
-      targetPresets.forEach((p: any) => {
-        if (Array.isArray(p.slots)) flatSlots.push(...p.slots);
-      });
-
-      if (flatSlots.length > 0) {
-        const rows = flatSlots.map((slotTime: string) => ({
-          doctor_id,
-          start_time: slotTime,
-          is_available: true,
-          created_at: new Date().toISOString()
-        }));
-        await supabase.from('schedule_slots').insert(rows);
-      }
-    } catch (slotErr) {
-      console.warn('schedule_slots write bypass:', slotErr);
-    }
-
-    // Strategy 2: Attempt to update profiles (with graceful fallback if column is missing)
+    // Write the recurring template to profiles.schedule_presets (stable store).
+    // Do NOT touch schedule_slots here — that table is for booking instances only.
     try {
       await supabase
         .from('profiles')
-        .update({
-          schedule_presets: targetPresets,
-        })
+        .update({ schedule_presets: targetPresets })
         .eq('id', doctor_id);
     } catch (profileErr) {
-      console.warn('profiles schedule_presets column missing, falling back:', profileErr);
+      console.warn('profiles schedule_presets update failed:', profileErr);
     }
 
     return NextResponse.json({ success: true, presets: targetPresets }, { status: 200 });
   } catch (err: any) {
     console.error('Safe POST Schedule Catch:', err);
-    // Never crash the frontend with 500, return success with client-side persistence
     return NextResponse.json({ success: true, warning: err.message }, { status: 200 });
   }
 }

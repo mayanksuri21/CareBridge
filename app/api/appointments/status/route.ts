@@ -3,6 +3,33 @@ import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
+function getAdminClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  return createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+}
+
+/** Release the linked schedule slot so it becomes bookable again. */
+async function releaseSlot(supabase: any, appointmentId: string) {
+  try {
+    const { data: appt } = await supabase
+      .from('appointments')
+      .select('slot_id')
+      .eq('id', appointmentId)
+      .maybeSingle();
+
+    if (appt?.slot_id) {
+      await supabase
+        .from('schedule_slots')
+        .update({ is_booked: false })
+        .eq('id', appt.slot_id)
+        .eq('is_booked', true);
+    }
+  } catch (e) {
+    console.warn('[status-api] Failed to release slot:', e);
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -14,11 +41,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Missing appointmentId" }, { status: 400 });
     }
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-      process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
-      { auth: { persistSession: false } }
-    );
+    const supabase = getAdminClient();
 
     console.log("[status-api] fetching current appointment");
     const { data: currentAppt, error: fetchErr } = await supabase
@@ -94,6 +117,12 @@ export async function POST(request: Request) {
     if (!data) {
       console.error("[status-api] Update status failed: no rows matched for id:", appointmentId);
       return NextResponse.json({ error: "Appointment not found or could not be updated" }, { status: 404 });
+    }
+
+    // Release the linked schedule slot when the appointment is cancelled, declined,
+    // or completed — the slot should become bookable again.
+    if (dbStatus === 'cancelled' || dbStatus === 'completed') {
+      await releaseSlot(supabase, appointmentId);
     }
 
     const frontendStatus = 

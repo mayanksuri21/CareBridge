@@ -88,12 +88,32 @@ export async function POST(request: Request) {
     if (itemsError) throw itemsError
 
     if (appointmentId) {
-      const { error: appointmentError } = await admin
+      // Only mark the appointment as completed when its scheduled time has
+      // genuinely passed (full UTC timestamp comparison, not just date).
+      const { data: apptSlot } = await admin
         .from("appointments")
-        .update({ status: "completed" })
+        .select("slot_id, schedule_slots!inner(start_time)")
         .eq("id", appointmentId)
         .eq("doctor_id", user.id)
-      if (appointmentError) console.warn("Appointment status update failed:", appointmentError)
+        .maybeSingle()
+
+      const slotData: any = apptSlot?.schedule_slots
+      const scheduledTime = Array.isArray(slotData) ? slotData[0]?.start_time : slotData?.start_time
+      const shouldComplete = !scheduledTime || new Date(scheduledTime).getTime() <= Date.now()
+
+      if (shouldComplete) {
+        const { error: appointmentError } = await admin
+          .from("appointments")
+          .update({ status: "completed" })
+          .eq("id", appointmentId)
+          .eq("doctor_id", user.id)
+        if (appointmentError) console.warn("Appointment status update failed:", appointmentError)
+      } else {
+        console.warn(
+          `[prescription-save] Skipping status=completed for appointment ${appointmentId} — ` +
+          `scheduled time ${scheduledTime} is still in the future.`
+        )
+      }
     }
 
     return NextResponse.json({ prescription })

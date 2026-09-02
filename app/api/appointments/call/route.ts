@@ -3,14 +3,37 @@ import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
+function getAdminClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  return createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+}
+
+/** Release the linked schedule slot so it becomes bookable again. */
+async function releaseSlot(supabase: any, appointmentId: string) {
+  try {
+    const { data: appt } = await supabase
+      .from('appointments')
+      .select('slot_id')
+      .eq('id', appointmentId)
+      .maybeSingle();
+
+    if (appt?.slot_id) {
+      await supabase
+        .from('schedule_slots')
+        .update({ is_booked: false })
+        .eq('id', appt.slot_id)
+        .eq('is_booked', true);
+    }
+  } catch (e) {
+    console.warn('[call-api] Failed to release slot:', e);
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const { appointment_id, action } = await request.json();
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      { auth: { persistSession: false } }
-    );
+    const supabase = getAdminClient();
 
     // 1. Fetch current appointment details
     const { data: currentAppt } = await supabase
@@ -69,6 +92,11 @@ export async function POST(request: Request) {
       throw error;
     }
 
+    // Release the linked schedule slot when the appointment is declined or completed.
+    if (statusText === 'declined' || statusText === 'completed') {
+      await releaseSlot(supabase, appointment_id);
+    }
+
     return NextResponse.json({ 
       success: true, 
       status: statusText,
@@ -84,11 +112,7 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const appointment_id = searchParams.get('appointment_id');
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      { auth: { persistSession: false } }
-    );
+    const supabase = getAdminClient();
 
     const mapAppointment = (appt: any) => {
       if (!appt) return null;

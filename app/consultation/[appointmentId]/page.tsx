@@ -36,7 +36,6 @@ export default function ConsultationRoom() {
 
   // WebRTC Tracks States
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
 
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
@@ -138,6 +137,20 @@ export default function ConsultationRoom() {
     }
   }, [appointment, currentUser, token, roomId, patientJoinClicked, isDoctor, isPatient]);
 
+  // 4b. When the doctor enters the room, signal [DOCTOR_IN_ROOM] so the patient portal detects it
+  useEffect(() => {
+    if (!appointment || !isDoctor) return;
+    if (appointment.is_doctor_in_room) return; // already signaled
+
+    fetch('/api/appointments/call', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ appointment_id: roomId, action: 'start' })
+    })
+    .then(() => loadAppointment())
+    .catch(err => console.error("Failed to signal doctor in room:", err));
+  }, [appointment, isDoctor, roomId]);
+
   // 5. Initialize LiveKit Room and WebRTC Peer Connection
   const room = useMemo(() => new Room({
     adaptiveStream: true,
@@ -147,7 +160,8 @@ export default function ConsultationRoom() {
   useEffect(() => {
     if (!showCallView || !token) return;
 
-    room.on(RoomEvent.Connected, async () => {
+    // Store handler references so we can remove them on cleanup
+    const onConnected = async () => {
       try {
         if (typeof room.localParticipant.enableCameraAndMicrophone === 'function') {
           await room.localParticipant.enableCameraAndMicrophone();
@@ -155,32 +169,18 @@ export default function ConsultationRoom() {
           await room.localParticipant.setCameraEnabled(true);
           await room.localParticipant.setMicrophoneEnabled(true);
         }
+        // Attach local video from LiveKit published tracks (no separate getUserMedia needed)
+        for (const [, pub] of room.localParticipant.videoTrackPublications) {
+          if (pub.track && localVideoRef.current) {
+            pub.track.attach(localVideoRef.current);
+          }
+        }
       } catch (trackErr) {
         console.error("PublishTrackError caught safely:", trackErr);
       }
-    });
-
-    const connectToRoom = async () => {
-      try {
-        await room.connect(process.env.NEXT_PUBLIC_LIVEKIT_URL!, token);
-
-        navigator.mediaDevices?.getUserMedia({ video: true, audio: true })
-          .then((s) => {
-            setLocalStream(s);
-            if (localVideoRef.current) {
-              localVideoRef.current.srcObject = s;
-            }
-          })
-          .catch(e => console.warn("Local camera preview error:", e));
-      } catch (err) {
-        console.error("WebRTC connection failed:", err);
-      }
     };
 
-    connectToRoom();
-
-    // Track Subscribed listener
-    room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+    const onTrackSubscribed = (track: any, publication: any, participant: any) => {
       if (track.kind === 'video') {
         const streamObj = new MediaStream([track.mediaStreamTrack]);
         setRemoteStream(streamObj);
@@ -191,18 +191,40 @@ export default function ConsultationRoom() {
         const audioStream = new MediaStream([track.mediaStreamTrack]);
         if (audioRef.current) {
           audioRef.current.srcObject = audioStream;
-          audioRef.current.play().catch(e => console.warn("Audio play fail:", e));
+          audioRef.current.play().catch((e: any) => console.warn("Audio play fail:", e));
         }
       }
-    });
+    };
 
-    room.on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
+    const onTrackUnsubscribed = (track: any, publication: any, participant: any) => {
       if (track.kind === 'video') {
         setRemoteStream(null);
       }
+    };
+
+    // Register listeners BEFORE connect so we don't miss events
+    room.on(RoomEvent.Connected, onConnected);
+    room.on(RoomEvent.TrackSubscribed, onTrackSubscribed);
+    room.on(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
+
+    room.connect(process.env.NEXT_PUBLIC_LIVEKIT_URL!, token).catch(err => {
+      console.error("WebRTC connection failed:", err);
     });
 
     return () => {
+      // Detach local tracks from video element
+      for (const [, pub] of room.localParticipant.videoTrackPublications) {
+        if (pub.track && localVideoRef.current) {
+          try { pub.track.detach(localVideoRef.current); } catch (_) {}
+        }
+      }
+      // Clear video elements
+      if (localVideoRef.current) localVideoRef.current.srcObject = null;
+      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+      // Remove listeners before disconnect to avoid stale callbacks
+      room.off(RoomEvent.Connected, onConnected);
+      room.off(RoomEvent.TrackSubscribed, onTrackSubscribed);
+      room.off(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
       room.disconnect();
     };
   }, [showCallView, token, room]);
@@ -338,7 +360,15 @@ export default function ConsultationRoom() {
   };
 
   const handleEndCall = async () => {
-    if (localStream) localStream.getTracks().forEach((t: any) => t.stop());
+    // Stop all local LiveKit tracks
+    try {
+      for (const [, pub] of room.localParticipant.videoTrackPublications) {
+        if (pub.track) pub.track.stop();
+      }
+      for (const [, pub] of room.localParticipant.audioTrackPublications) {
+        if (pub.track) pub.track.stop();
+      }
+    } catch (_) {}
     try {
       await fetch('/api/appointments/call', {
         method: 'POST',

@@ -123,6 +123,26 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'Missing appointment ID' }, { status: 400 });
     }
 
+    // Release the linked schedule slot before deleting the appointment,
+    // so the slot becomes bookable again for other patients.
+    try {
+      const { data: appt } = await supabaseAdmin
+        .from('appointments')
+        .select('slot_id')
+        .eq('id', appointmentId)
+        .maybeSingle();
+
+      if (appt?.slot_id) {
+        await supabaseAdmin
+          .from('schedule_slots')
+          .update({ is_booked: false })
+          .eq('id', appt.slot_id)
+          .eq('is_booked', true);
+      }
+    } catch (e) {
+      console.warn('[patient-appointments] Failed to release slot:', e);
+    }
+
     const { error } = await supabaseAdmin
       .from('appointments')
       .delete()
