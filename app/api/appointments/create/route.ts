@@ -61,6 +61,17 @@ export async function POST(request: Request) {
 
     const { start, end } = buildSlotRange(appointmentDate, timeSlot);
 
+    // Enforce advance booking: reject past dates/times
+    if (start.getTime() <= Date.now()) {
+      return NextResponse.json(
+        {
+          error:
+            "Cannot book appointments for past dates or times. Please select a future time slot from tomorrow onwards.",
+        },
+        { status: 400 },
+      );
+    }
+
     // 1. Look for an existing schedule_slots row for this doctor on this day,
     //    then match it to the requested time in JS to avoid timestamp/timezone
     //    equality issues in the SQL query itself.

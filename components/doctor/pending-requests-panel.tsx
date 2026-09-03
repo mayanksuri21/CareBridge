@@ -92,11 +92,13 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
 
       filteredList = filteredList.map((appt: any) => {
         const reasonStr = appt.reason || '';
-        const isDoctorInRoom = reasonStr.includes('[DOCTOR_IN_ROOM]');
-        const isPatientWaiting = reasonStr.includes('[PATIENT_WAITING]');
-        const isPatientAdmitted = reasonStr.includes('[PATIENT_ADMITTED]');
-        const isPatientDeclined = reasonStr.includes('[PATIENT_DECLINED]');
-        const isCallActive = reasonStr.includes('[CALL_ACTIVE]');
+        const isDeclinedText = reasonStr.includes('Declined:') || reasonStr.includes('[PATIENT_DECLINED]');
+        const isCancelledOrDeclined = appt.status === 'cancelled' || appt.status === 'rejected' || appt.status === 'declined' || isDeclinedText;
+
+        const isDoctorInRoom = !isCancelledOrDeclined && reasonStr.includes('[DOCTOR_IN_ROOM]');
+        const isPatientWaiting = !isCancelledOrDeclined && reasonStr.includes('[PATIENT_WAITING]');
+        const isPatientAdmitted = !isCancelledOrDeclined && reasonStr.includes('[PATIENT_ADMITTED]');
+        const isCallActive = !isCancelledOrDeclined && (reasonStr.includes('[CALL_ACTIVE]') || isDoctorInRoom);
         const isPendingApproval = reasonStr.includes('[PENDING_APPROVAL]');
 
         let cleanReason = reasonStr;
@@ -105,7 +107,9 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
         });
 
         let statusVal = appt.status;
-        if (isPatientAdmitted) {
+        if (isCancelledOrDeclined) {
+          statusVal = 'declined';
+        } else if (isPatientAdmitted) {
           statusVal = 'patient_admitted';
         } else if (isPatientWaiting) {
           statusVal = 'patient_waiting';
@@ -137,14 +141,18 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
         };
       });
 
-      // Split into pending vs confirmed
+      // Split into pending vs confirmed (strictly exclude declined and cancelled)
       const pending = filteredList.filter(
-        (a: any) => a.status === "pending"
+        (a: any) => a.status === "pending" && a.status !== "declined" && a.status !== "cancelled" && !a.reason?.includes("Declined:")
       );
       const confirmed = filteredList.filter(
-        (a: any) => a.status === "scheduled" ||
-          a.status === "doctor_in_room" || a.status === "patient_waiting" ||
-          a.status === "patient_admitted" || a.status === "in_progress"
+        (a: any) =>
+          a.status !== "declined" &&
+          a.status !== "cancelled" &&
+          !a.reason?.includes("Declined:") &&
+          (a.status === "scheduled" ||
+            a.status === "doctor_in_room" || a.status === "patient_waiting" ||
+            a.status === "patient_admitted" || a.status === "in_progress")
       );
       setRequests(pending);
       setConfirmedConsultations(confirmed);
@@ -278,7 +286,16 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
     }
   };
 
-  const handleStartConsultation = (appointmentId: string) => {
+  const handleStartConsultation = async (appointmentId: string) => {
+    try {
+      await fetch('/api/appointments/call', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ appointment_id: appointmentId, action: 'start' }),
+      });
+    } catch (e) {
+      console.error("Failed to signal doctor start:", e);
+    }
     window.location.href = `/consultation/${appointmentId}`;
   };
 

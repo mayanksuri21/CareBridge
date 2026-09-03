@@ -72,12 +72,14 @@ export async function GET(request: Request) {
 
     const mapped = (data || []).map((appt: any) => {
       const reasonStr = appt.reason || '';
-
-      const isDoctorInRoom = reasonStr.includes('[DOCTOR_IN_ROOM]');
-      const isPatientWaiting = reasonStr.includes('[PATIENT_WAITING]');
-      const isPatientAdmitted = reasonStr.includes('[PATIENT_ADMITTED]');
       const isPatientDeclined = reasonStr.includes('[PATIENT_DECLINED]');
-      const isCallActive = reasonStr.includes('[CALL_ACTIVE]');
+      const isDeclinedText = reasonStr.includes('Declined:') || isPatientDeclined;
+      const isCancelledOrDeclined = appt.status === 'cancelled' || appt.status === 'rejected' || appt.status === 'declined' || isDeclinedText;
+
+      const isDoctorInRoom = !isCancelledOrDeclined && reasonStr.includes('[DOCTOR_IN_ROOM]');
+      const isPatientWaiting = !isCancelledOrDeclined && reasonStr.includes('[PATIENT_WAITING]');
+      const isPatientAdmitted = !isCancelledOrDeclined && reasonStr.includes('[PATIENT_ADMITTED]');
+      const isCallActive = !isCancelledOrDeclined && (reasonStr.includes('[CALL_ACTIVE]') || isDoctorInRoom);
       const isPendingApprovalTag = reasonStr.includes('[PENDING_APPROVAL]');
 
       let cleanReason = reasonStr;
@@ -86,7 +88,9 @@ export async function GET(request: Request) {
       });
 
       let statusVal = appt.status;
-      if (isPatientAdmitted) {
+      if (isCancelledOrDeclined) {
+        statusVal = 'declined';
+      } else if (isPatientAdmitted) {
         statusVal = 'patient_admitted';
       } else if (isPatientWaiting) {
         statusVal = 'patient_waiting';
@@ -98,8 +102,6 @@ export async function GET(request: Request) {
         statusVal = 'pending';
       } else if (appt.status === 'booked' || appt.status === 'scheduled') {
         statusVal = 'scheduled';
-      } else if (appt.status === 'cancelled') {
-        statusVal = 'declined';
       }
 
       // Prefer the real slot timestamp; fall back to parsing the reason text

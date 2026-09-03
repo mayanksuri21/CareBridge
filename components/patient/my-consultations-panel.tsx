@@ -1,8 +1,45 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Calendar, Clock, Video, AlertCircle, CheckCircle2, XCircle } from 'lucide-react';
 import Link from 'next/link';
+
+/** Plays a pleasant dual-tone chime when the doctor starts the consultation. */
+function playDoctorAlertChime() {
+  try {
+    if (typeof window === "undefined") return;
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+
+    // Note 1: D5 (587.33 Hz)
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(587.33, now);
+    gain1.gain.setValueAtTime(0.2, now);
+    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.35);
+
+    // Note 2: A5 (880.00 Hz)
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(880.00, now + 0.15);
+    gain2.gain.setValueAtTime(0.25, now + 0.15);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(now + 0.15);
+    osc2.stop(now + 0.6);
+  } catch (e) {
+    console.warn("Could not play consultation chime:", e);
+  }
+}
 
 /** Returns true if a consultation's scheduled date+time is more than 30 minutes in the past. */
 function isConsultationPast(appt: any): boolean {
@@ -40,7 +77,7 @@ function isConsultationPast(appt: any): boolean {
       const now = new Date();
       return now.getTime() > scheduledDateTime.getTime() + 30 * 60 * 1000;
     }
-  } catch {}
+  } catch { }
   return false;
 }
 
@@ -48,7 +85,7 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
   const [appointments, setAppointments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [dismissedApprovals, setDismissedApprovals] = useState<Set<string>>(new Set());
-
+  const playedChimeRef = useRef<string | null>(null);
   // Load dismissed approval notifications from localStorage on mount
   useEffect(() => {
     try {
@@ -57,7 +94,7 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
         const ids: string[] = JSON.parse(stored);
         setDismissedApprovals(new Set(ids));
       }
-    } catch {}
+    } catch { }
   }, []);
 
   const fetchConsultations = async () => {
@@ -76,11 +113,12 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
 
         list = list.map((appt: any) => {
           const reasonStr = appt.reason || '';
-          const isDoctorInRoom = reasonStr.includes('[DOCTOR_IN_ROOM]');
-          const isPatientWaiting = reasonStr.includes('[PATIENT_WAITING]');
-          const isPatientAdmitted = reasonStr.includes('[PATIENT_ADMITTED]');
-          const isPatientDeclined = reasonStr.includes('[PATIENT_DECLINED]');
-          const isCallActive = reasonStr.includes('[CALL_ACTIVE]');
+          const isDeclined = appt.status === 'cancelled' || appt.status === 'rejected' || appt.status === 'declined' || reasonStr.includes('Declined:') || reasonStr.includes('[PATIENT_DECLINED]');
+
+          const isDoctorInRoom = !isDeclined && (reasonStr.includes('[DOCTOR_IN_ROOM]') || Boolean(appt.is_doctor_in_room));
+          const isPatientWaiting = !isDeclined && reasonStr.includes('[PATIENT_WAITING]');
+          const isPatientAdmitted = !isDeclined && reasonStr.includes('[PATIENT_ADMITTED]');
+          const isCallActive = !isDeclined && (reasonStr.includes('[CALL_ACTIVE]') || isDoctorInRoom);
           const isPendingApproval = reasonStr.includes('[PENDING_APPROVAL]');
 
           let cleanReason = reasonStr;
@@ -89,13 +127,15 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
           });
 
           let statusVal = appt.status;
-          if (isPatientAdmitted) {
+          if (isDeclined) {
+            statusVal = 'declined';
+          } else if (isPatientAdmitted) {
             statusVal = 'patient_admitted';
           } else if (isPatientWaiting) {
             statusVal = 'patient_waiting';
           } else if (isDoctorInRoom) {
             statusVal = 'doctor_in_room';
-          } else if (isCallActive) {
+          } else if (isCallActive || appt.status === 'in_progress') {
             statusVal = 'in_progress';
           } else if (appt.status === 'scheduled') {
             statusVal = 'scheduled';
@@ -103,8 +143,6 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
             statusVal = 'pending';
           } else if (appt.status === 'booked') {
             statusVal = isPendingApproval ? 'pending' : 'scheduled';
-          } else if (appt.status === 'cancelled' || appt.status === 'rejected' || appt.status === 'declined') {
-            statusVal = 'declined';
           }
 
           const dateMatch = cleanReason.match(/Selected Date:\s*([\w\d, -]+)/i) || cleanReason.match(/Preferred Date:\s*([\w\d, -]+)/i);
@@ -114,8 +152,12 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
 
           return {
             ...appt,
+            id: appt.id,
+            roomId: appt.id,
+            appointment_id: appt.id,
             status: statusVal,
-            call_active: isCallActive || isDoctorInRoom || isPatientWaiting || isPatientAdmitted,
+            is_doctor_in_room: isDoctorInRoom,
+            call_active: isCallActive,
             reason: cleanReason,
             appointment_date: parsedDate,
             time_slot: parsedTime,
@@ -173,14 +215,14 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
               const now = new Date();
               return now.getTime() > scheduledDateTime.getTime() + 30 * 60 * 1000;
             }
-          } catch {}
+          } catch { }
           return false;
         };
 
         const filtered = activeOnly.filter((a: any) => {
           // Always show live/active consultations
           if (a.status === 'doctor_in_room' || a.status === 'patient_waiting' ||
-              a.status === 'patient_admitted' || a.status === 'in_progress' || a.call_active) {
+            a.status === 'patient_admitted' || a.status === 'in_progress' || a.call_active) {
             return true;
           }
           // Always show pending (awaiting doctor approval)
@@ -207,7 +249,7 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
 
   useEffect(() => {
     fetchConsultations();
-    const interval = setInterval(fetchConsultations, 2000);
+    const interval = setInterval(fetchConsultations, 3500);
     return () => clearInterval(interval);
   }, [patientId]);
 
@@ -233,45 +275,81 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
     });
   }, []);
 
+
+
+  const activeLiveAppt = appointments.find((a) => {
+    const isDeclined = a.status === 'declined' || a.status === 'cancelled' || a.status === 'rejected' || a.reason?.includes('Declined:');
+    if (isDeclined) return false;
+    // Merely scheduled, booked, or pending appointments MUST NOT trigger live alert banners
+    if (a.status === 'scheduled' || a.status === 'booked' || a.status === 'pending') {
+      return false;
+    }
+    return (
+      a.status === 'doctor_in_room' ||
+      a.status === 'in_progress' ||
+      (a.is_doctor_in_room && a.status !== 'scheduled' && a.status !== 'booked')
+    );
+  });
+
+  useEffect(() => {
+    if (activeLiveAppt && playedChimeRef.current !== activeLiveAppt.id) {
+      playedChimeRef.current = activeLiveAppt.id;
+      if (typeof playDoctorAlertChime === 'function') {
+        playDoctorAlertChime();
+      }
+    }
+  }, [activeLiveAppt]);
+
   if (loading) {
     return <div className="text-slate-500 text-xs py-8 text-center animate-pulse">Loading consultations...</div>;
   }
 
-  const activeLiveAppt = appointments.find((a) =>
-    a.status === 'doctor_in_room' ||
-    a.status === 'patient_waiting' ||
-    a.status === 'patient_admitted' ||
-    a.status === 'in_progress' ||
-    a.call_active
-  );
-
-  const liveDoctorName = activeLiveAppt
-    ? (activeLiveAppt.doctor_name || activeLiveAppt.doctor?.name || activeLiveAppt.doctor?.full_name || 'Rahul Sharma').replace(/^Dr\.\s+/i, '')
-    : '';
+  const rawDoctorName = activeLiveAppt
+    ? (activeLiveAppt.doctor_name || activeLiveAppt.doctor?.name || activeLiveAppt.doctor?.full_name || 'Rahul Sharma')
+    : 'Rahul Sharma';
+  const liveDoctorName = rawDoctorName.startsWith('Dr.') ? rawDoctorName : `Dr. ${rawDoctorName}`;
 
   const approvedConsultations = appointments.filter(
-    a => (a.status === 'scheduled' || a.status === 'booked') && !a.call_active && !dismissedApprovals.has(a.id) && !isConsultationPast(a)
+    a => (a.status === 'scheduled' || a.status === 'booked') &&
+         !a.call_active &&
+         !a.is_doctor_in_room &&
+         a.status !== 'declined' &&
+         a.status !== 'cancelled' &&
+         !a.reason?.includes('Declined:') &&
+         !dismissedApprovals.has(a.id) &&
+         !isConsultationPast(a)
   );
 
   return (
     <div className="space-y-4">
       {/* Live Incoming Alert Banner */}
       {activeLiveAppt && (
-        <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-955 via-slate-900 to-emerald-955 border border-emerald-500/60 shadow-[0_0_25px_rgba(16,185,129,0.35)] flex flex-col sm:flex-row items-center justify-between gap-4 animate-bounce">
+        <div className="p-4 rounded-2xl border border-emerald-500/60 flex flex-col sm:flex-row items-center justify-between gap-4 animate-in fade-in slide-in-from-bottom duration-300"
+          style={{
+            background: 'linear-gradient(135deg, rgba(6,95,70,0.5) 0%, rgba(15,23,42,0.8) 50%, rgba(6,95,70,0.5) 100%)',
+            boxShadow: '0 0 30px rgba(16,185,129,0.25), 0 0 60px rgba(16,185,129,0.12)',
+            animation: 'consultationPulse 2s ease-in-out infinite'
+          }}>
+          <style>{`
+            @keyframes consultationPulse {
+              0%, 100% { box-shadow: 0 0 30px rgba(16,185,129,0.25), 0 0 60px rgba(16,185,129,0.12); }
+              50% { box-shadow: 0 0 50px rgba(16,185,129,0.45), 0 0 100px rgba(16,185,129,0.2); }
+            }
+          `}</style>
           <div className="flex items-center gap-3">
-            <span className="relative flex h-3.5 w-3.5">
+            <span className="relative flex h-3.5 w-3.5 shrink-0">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500"></span>
             </span>
             <div>
               <h4 className="text-sm font-bold text-white">
-                🟢 Dr. {liveDoctorName} is in the Consultation Room — Click to Join Call
+                🔴 {liveDoctorName} has started your consultation and is waiting in the room!
               </h4>
             </div>
           </div>
           <Link href={`/consultation/${activeLiveAppt.id}`}>
-            <button className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-955 font-bold text-xs shadow-lg shadow-emerald-500/30 flex items-center gap-2 transition-all cursor-pointer">
-              <Video className="w-4 h-4" /> Join Video Call
+            <button className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs shadow-lg shadow-emerald-600/40 flex items-center gap-2 transition-all cursor-pointer animate-pulse shrink-0 border border-emerald-400">
+              <Video className="w-4 h-4" /> Join Now
             </button>
           </Link>
         </div>
@@ -304,63 +382,18 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
       ) : (
         <div className="space-y-3">
           {appointments.map((appt) => {
-            const isLive =
+            const isRejected = appt.status === 'rejected' || appt.status === 'declined' || appt.status === 'cancelled' || Boolean(appt.reason?.includes('Declined:'));
+            const isLive = !isRejected && (
               appt.status === 'doctor_in_room' ||
-              appt.status === 'patient_waiting' ||
-              appt.status === 'patient_admitted' ||
-              appt.status === 'in_progress' ||
-              appt.call_active;
+              appt.status === 'in_progress'
+            );
             const doctorName = appt.doctor_name || appt.doctor?.name || appt.doctor?.full_name || 'Dr. Rahul Sharma';
             const department = appt.department || appt.doctor?.specialty || 'General Medicine';
             const date = appt.appointment_date || appt.scheduled_date || appt.scheduled_at?.split('T')?.[0] || 'Scheduled Date';
             const time = appt.time_slot || appt.scheduled_time || '12:00 PM';
             const isPending = appt.status === 'pending';
-            const isRejected = appt.status === 'rejected' || appt.status === 'declined' || appt.status === 'cancelled';
-            const isScheduled = appt.status === 'scheduled' || appt.status === 'booked';
+            const isScheduled = (appt.status === 'scheduled' || appt.status === 'booked') && !isRejected;
             const isMissed = isScheduled && !isLive && isConsultationPast(appt);
-
-            // Resilient date/time check
-            let isTimeReached = false;
-            try {
-              const dStr = appt.appointment_date || appt.scheduled_date || appt.scheduled_at?.split('T')?.[0] || '';
-              const tStr = appt.time_slot || appt.scheduled_time || '12:00 PM';
-              
-              if (dStr) {
-                let parsedDate: Date | null = null;
-                if (dStr.includes('-')) {
-                  const parts = dStr.split('-');
-                  if (parts[0].length === 4) {
-                    parsedDate = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
-                  } else {
-                    parsedDate = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
-                  }
-                } else if (dStr.includes('/')) {
-                  const parts = dStr.split('/');
-                  if (parts[2].length === 4) {
-                    parsedDate = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
-                  }
-                }
-
-                if (parsedDate && !isNaN(parsedDate.getTime())) {
-                  const timeParts = tStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
-                  if (timeParts) {
-                    let hour = parseInt(timeParts[1], 10);
-                    const minute = parseInt(timeParts[2], 10);
-                    const ampm = timeParts[3].toUpperCase();
-                    if (ampm === 'PM' && hour < 12) hour += 12;
-                    if (ampm === 'AM' && hour === 12) hour = 0;
-                    
-                    const scheduledDateTime = new Date(parsedDate.getFullYear(), parsedDate.getMonth(), parsedDate.getDate(), hour, minute);
-                    isTimeReached = new Date() >= scheduledDateTime;
-                  } else {
-                    const scheduledDateTime = new Date(parsedDate.getFullYear(), parsedDate.getMonth(), parsedDate.getDate(), 12, 0);
-                    isTimeReached = new Date() >= scheduledDateTime;
-                  }
-                }
-              }
-            } catch (err) {
-              console.warn("Date parsing error:", err);
-            }
 
             let declineReasonText = '';
             if (appt.reason) {
@@ -382,12 +415,12 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
               <div
                 key={appt.id}
                 className={`p-5 rounded-2xl bg-slate-900/90 border transition-all ${isLive
-                    ? 'border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.15)]'
-                    : isRejected
-                      ? 'border-red-500/20 shadow-[0_0_15px_rgba(239,68,68,0.05)]'
-                      : isPending
-                        ? 'border-amber-500/20'
-                        : 'border-slate-800'
+                  ? 'border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.15)]'
+                  : isRejected
+                    ? 'border-red-500/20 shadow-[0_0_15px_rgba(239,68,68,0.05)]'
+                    : isPending
+                      ? 'border-amber-500/20'
+                      : 'border-slate-800'
                   }`}
               >
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -413,8 +446,8 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
                         </span>
                       )}
                       {isRejected && (
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-red-500/10 text-red-400 border border-red-550/30 flex items-center gap-1">
-                          <XCircle className="w-3 h-3" /> ✕ Request Declined
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-red-500/15 text-red-400 border border-red-500/30 flex items-center gap-1">
+                          ● Declined
                         </span>
                       )}
                     </div>
@@ -460,11 +493,25 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
 
                   <div className="w-full md:w-auto">
                     {isLive ? (
-                      <Link href={`/consultation/${appt.id}`}>
-                        <button className="w-full md:w-auto px-5 py-2.5 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-955 shadow-[0_0_15px_rgba(16,185,129,0.4)] animate-pulse flex items-center justify-center gap-2 transition-all cursor-pointer">
-                          <Video className="w-4 h-4" /> Join Video Call
+                      <Link href={`/consultation/${appt.id}`} className="w-full md:w-auto block">
+                        <button className="w-full md:w-auto px-5 py-3 rounded-xl text-xs font-extrabold bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_20px_rgba(16,185,129,0.5)] animate-pulse flex items-center justify-center gap-2.5 transition-all cursor-pointer border-2 border-emerald-400 ring-2 ring-emerald-400/50">
+                          <span className="relative flex h-3 w-3 shrink-0">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-3 w-3 bg-white"></span>
+                          </span>
+                          <Video className="w-4 h-4 shrink-0" />
+                          <span className="whitespace-normal md:whitespace-nowrap font-black tracking-tight">
+                            Join Consultation Room →
+                          </span>
                         </button>
                       </Link>
+                    ) : isRejected ? (
+                      <button
+                        onClick={() => handleRemoveDeclined(appt.id)}
+                        className="w-full md:w-auto px-4 py-2 rounded-xl text-xs font-semibold bg-red-955/40 hover:bg-red-900/40 text-red-400 border border-red-900/65 hover:text-red-300 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        Remove
+                      </button>
                     ) : isMissed ? (
                       <button
                         disabled
@@ -473,12 +520,6 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
                         <XCircle className="w-3.5 h-3.5" />
                         Session Missed
                       </button>
-                    ) : isScheduled && isTimeReached ? (
-                      <Link href={`/consultation/${appt.id}`}>
-                        <button className="w-full md:w-auto px-5 py-2.5 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-955 shadow-[0_0_15px_rgba(16,185,129,0.4)] animate-pulse flex items-center justify-center gap-2 transition-all cursor-pointer">
-                          <Video className="w-4 h-4" /> Join Consultation Room
-                        </button>
-                      </Link>
                     ) : isPending ? (
                       <button
                         disabled
@@ -486,13 +527,6 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
                       >
                         <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
                         Waiting for doctor approval
-                      </button>
-                    ) : isRejected ? (
-                      <button
-                        onClick={() => handleRemoveDeclined(appt.id)}
-                        className="w-full md:w-auto px-4 py-2 rounded-xl text-xs font-semibold bg-red-955/40 hover:bg-red-900/40 text-red-400 border border-red-900/65 hover:text-red-300 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                      >
-                        Remove
                       </button>
                     ) : (
                       <button

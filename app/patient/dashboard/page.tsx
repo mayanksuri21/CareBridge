@@ -134,6 +134,12 @@ export default async function PatientDashboardPage() {
       const doc = doctorMap.get(apt.doctor_id) || {}
       
       const reasonStr = apt.reason || ""
+      const isDoctorInRoom = reasonStr.includes('[DOCTOR_IN_ROOM]')
+      const isPatientWaiting = reasonStr.includes('[PATIENT_WAITING]')
+      const isPatientAdmitted = reasonStr.includes('[PATIENT_ADMITTED]')
+      const isCallActive = reasonStr.includes('[CALL_ACTIVE]') || isDoctorInRoom
+      const isPendingApproval = reasonStr.includes('[PENDING_APPROVAL]')
+
       const symptomsMatch = reasonStr.match(/Symptoms:\s*([^\n\r]*)/i)
       const dateMatch = reasonStr.match(/Selected Date:\s*([^\n\r]*)/i) || reasonStr.match(/Preferred Date:\s*([^\n\r]*)/i)
       const timeMatch = reasonStr.match(/Time Slot:\s*([^\n\r]*)/i)
@@ -143,19 +149,32 @@ export default async function PatientDashboardPage() {
       if (splitIndex !== -1) {
         cleanReason = reasonStr.substring(0, splitIndex).trim()
       }
-      cleanReason = cleanReason.replace(/\[PENDING_APPROVAL\]/g, '').trim()
+      ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]'].forEach(tag => {
+        cleanReason = cleanReason.replace(` ${tag}`, '').replace(tag, '')
+      })
+      cleanReason = cleanReason.trim()
       
       const parsedDate = dateMatch ? dateMatch[1].trim() : '2026-08-17'
       const parsedTime = timeMatch ? timeMatch[1].trim() : '02:00 PM'
       const parsedSymptoms = symptomsMatch ? symptomsMatch[1].trim() : ''
 
       let statusVal = apt.status || 'scheduled'
-      if (apt.status === 'booked') {
-        statusVal = reasonStr.includes('[PENDING_APPROVAL]') ? 'pending' : 'scheduled'
+      if (isPatientAdmitted) {
+        statusVal = 'patient_admitted'
+      } else if (isPatientWaiting) {
+        statusVal = 'patient_waiting'
+      } else if (isDoctorInRoom) {
+        statusVal = 'in_progress'
+      } else if (isCallActive || apt.status === 'in_progress') {
+        statusVal = 'in_progress'
+      } else if (apt.status === 'booked') {
+        statusVal = isPendingApproval ? 'pending' : 'scheduled'
       }
 
       return {
         id: apt.id,
+        roomId: apt.id,
+        appointment_id: apt.id,
         doctor_id: apt.doctor_id,
         doctor: {
           id: apt.doctor_id,
@@ -167,7 +186,10 @@ export default async function PatientDashboardPage() {
         time_slot: parsedTime,
         symptoms: parsedSymptoms,
         status: statusVal,
+        is_doctor_in_room: isDoctorInRoom,
+        call_active: isCallActive || isDoctorInRoom || statusVal === 'in_progress',
         reason: cleanReason || 'General Consultation',
+        raw_reason: reasonStr,
         created_at: apt.created_at
       }
     })

@@ -67,19 +67,29 @@ export async function POST(request: Request) {
       reason: currentAppt.reason
     });
 
-    // Build updated reason: strip tags and any previous decline annotation,
-    // then append "| Declined: <reason>" so the reason is always recoverable.
+    // Build updated reason: strip ALL call/room tags and previous decline annotations,
+    // then append "| Declined: <reason>" so the reason is always clean and recoverable.
     let existingReason = currentAppt.reason || '';
-    existingReason = existingReason.replace(/\s*\[PENDING_APPROVAL\]/g, '').trim();
+    const tagsToRemove = [
+      '[DOCTOR_IN_ROOM]',
+      '[PATIENT_WAITING]',
+      '[PATIENT_ADMITTED]',
+      '[PATIENT_DECLINED]',
+      '[CALL_ACTIVE]',
+      '[PENDING_APPROVAL]'
+    ];
+    tagsToRemove.forEach(tag => {
+      existingReason = existingReason.split(` ${tag}`).join('').split(tag).join('');
+    });
     existingReason = existingReason.replace(/\s*\|\s*Declined:.*$/i, '').trim();
 
     const updatedReason = existingReason
       ? `${existingReason} | Declined: ${declineReason.trim()}`
       : `Declined: ${declineReason.trim()}`;
 
-    // Use ONLY columns that exist in the schema: status + reason
+    // Primary status: 'cancelled' is universally permitted by appointments_status_check
     const updatePayload = {
-      status: 'declined',
+      status: 'cancelled',
       reason: updatedReason
     };
 
@@ -97,24 +107,6 @@ export async function POST(request: Request) {
       error: error?.message,
       code: error?.code
     });
-
-    // If 'declined' is not in the DB check constraint, fall back to 'cancelled'
-    if (error && (error.message?.includes("check constraint") || error.code === "23514")) {
-      console.warn("[decline-api] 'declined' violates constraint, falling back to 'cancelled'");
-      const fallbackPayload = { status: 'cancelled', reason: updatedReason };
-      const fallback = await supabase
-        .from('appointments')
-        .update(fallbackPayload)
-        .eq('id', appointment_id)
-        .select()
-        .maybeSingle();
-      error = fallback.error;
-      data = fallback.data;
-      console.log("[decline-api] fallback result:", {
-        data: data ? { id: data.id, status: data.status } : null,
-        error: error?.message
-      });
-    }
 
     if (error) {
       console.error("[decline-api] update failed:", error.message, error.code);

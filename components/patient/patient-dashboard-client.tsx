@@ -1,6 +1,6 @@
 "use client"
 
-import { FormEvent, useCallback, useEffect, useState } from "react"
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Activity, ArrowRight, CalendarDays, FileText, Send, Stethoscope, CheckCircle2, Pill, Video } from "lucide-react"
@@ -18,6 +18,43 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client"
 import { generatePrescriptionPDF, type PrintablePrescription } from "@/lib/generate-prescription-pdf"
 import { Download } from "lucide-react"
 import { formatStableDateTime, formatStableDate } from "@/lib/utils"
+
+/** Plays a pleasant dual-tone chime when the doctor starts the consultation. */
+function playDoctorAlertChime() {
+  try {
+    if (typeof window === "undefined") return;
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+
+    // Note 1: D5 (587.33 Hz)
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(587.33, now);
+    gain1.gain.setValueAtTime(0.2, now);
+    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.35);
+
+    // Note 2: A5 (880.00 Hz)
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(880.00, now + 0.15);
+    gain2.gain.setValueAtTime(0.25, now + 0.15);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(now + 0.15);
+    osc2.stop(now + 0.6);
+  } catch (e) {
+    console.warn("Could not play consultation chime:", e);
+  }
+}
 
 /** Returns true if a consultation's scheduled date+time is more than 30 minutes in the past. */
 function isConsultationPast(appt: any): boolean {
@@ -156,9 +193,20 @@ export function PatientDashboardClient({
     appt.status === "pending"
   ).length
 
-  const liveAppointment = appointments.find((appt) =>
-    appt.status === "in_progress" || appt.status === "doctor_in_room" || appt.call_active
-  )
+  const liveAppointment = appointments.find((appt) => {
+    const isDeclined = appt.status === "declined" || appt.status === "cancelled" || appt.status === "rejected" || appt.reason?.includes("Declined:");
+    if (isDeclined) return false;
+    if (appt.status === "scheduled" || appt.status === "booked" || appt.status === "pending") return false;
+    return appt.status === "in_progress" || appt.status === "doctor_in_room";
+  })
+
+  const playedChimeForApptIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (liveAppointment && playedChimeForApptIdRef.current !== liveAppointment.id) {
+      playedChimeForApptIdRef.current = liveAppointment.id;
+      playDoctorAlertChime();
+    }
+  }, [liveAppointment]);
 
   const greeting = (() => {
     const hour = new Date().getHours()
@@ -198,7 +246,13 @@ export function PatientDashboardClient({
   const refreshAppointments = useCallback(async () => {
     try {
       setLoadingAppointments(true)
-      const res = await fetch(`/api/patient/consultations`)
+      const res = await fetch(`/api/patient/consultations?_t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache'
+        }
+      })
       if (!res.ok) throw new Error("Failed to fetch appointments")
 
       const payload = await res.json()
@@ -212,11 +266,12 @@ export function PatientDashboardClient({
       // Map appointment status client-side exactly like the call api does
       list = list.map((appt: any) => {
         const reasonStr = appt.reason || '';
-        const isDoctorInRoom = reasonStr.includes('[DOCTOR_IN_ROOM]');
-        const isPatientWaiting = reasonStr.includes('[PATIENT_WAITING]');
-        const isPatientAdmitted = reasonStr.includes('[PATIENT_ADMITTED]');
-        const isPatientDeclined = reasonStr.includes('[PATIENT_DECLINED]');
-        const isCallActive = reasonStr.includes('[CALL_ACTIVE]');
+        const isDeclined = appt.status === 'cancelled' || appt.status === 'rejected' || appt.status === 'declined' || reasonStr.includes('Declined:') || reasonStr.includes('[PATIENT_DECLINED]');
+
+        const isDoctorInRoom = !isDeclined && (reasonStr.includes('[DOCTOR_IN_ROOM]') || Boolean(appt.is_doctor_in_room));
+        const isPatientWaiting = !isDeclined && reasonStr.includes('[PATIENT_WAITING]');
+        const isPatientAdmitted = !isDeclined && reasonStr.includes('[PATIENT_ADMITTED]');
+        const isCallActive = !isDeclined && (reasonStr.includes('[CALL_ACTIVE]') || isDoctorInRoom);
         const isPendingApproval = reasonStr.includes('[PENDING_APPROVAL]');
 
         let cleanReason = reasonStr;
@@ -225,13 +280,15 @@ export function PatientDashboardClient({
         });
 
         let statusVal = appt.status;
-        if (isPatientAdmitted) {
+        if (isDeclined) {
+          statusVal = 'declined';
+        } else if (isPatientAdmitted) {
           statusVal = 'patient_admitted';
         } else if (isPatientWaiting) {
           statusVal = 'patient_waiting';
         } else if (isDoctorInRoom) {
           statusVal = 'doctor_in_room';
-        } else if (isCallActive) {
+        } else if (isCallActive || appt.status === 'in_progress') {
           statusVal = 'in_progress';
         } else if (appt.status === 'booked') {
           statusVal = isPendingApproval ? 'pending' : 'scheduled';
@@ -245,8 +302,12 @@ export function PatientDashboardClient({
 
         return {
           ...appt,
+          id: appt.id,
+          roomId: appt.id,
+          appointment_id: appt.id,
           status: statusVal,
-          call_active: isCallActive || isDoctorInRoom || isPatientWaiting || isPatientAdmitted,
+          is_doctor_in_room: isDoctorInRoom,
+          call_active: isCallActive,
           reason: cleanReason,
           appointment_date: parsedDate,
           time_slot: parsedTime,
@@ -271,7 +332,13 @@ export function PatientDashboardClient({
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
-        const res = await fetch('/api/patient/consultations');
+        const res = await fetch(`/api/patient/consultations?_t=${Date.now()}`, {
+          cache: 'no-store',
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache'
+          }
+        });
         if (res.ok) {
           const data = await res.json();
           if (data.appointments) {
@@ -282,11 +349,11 @@ export function PatientDashboardClient({
 
             list = list.map((appt: any) => {
               const reasonStr = appt.reason || '';
-              const isDoctorInRoom = reasonStr.includes('[DOCTOR_IN_ROOM]');
+              const isDoctorInRoom = reasonStr.includes('[DOCTOR_IN_ROOM]') || appt.is_doctor_in_room;
               const isPatientWaiting = reasonStr.includes('[PATIENT_WAITING]');
               const isPatientAdmitted = reasonStr.includes('[PATIENT_ADMITTED]');
               const isPatientDeclined = reasonStr.includes('[PATIENT_DECLINED]');
-              const isCallActive = reasonStr.includes('[CALL_ACTIVE]');
+              const isCallActive = reasonStr.includes('[CALL_ACTIVE]') || isDoctorInRoom;
               const isPendingApproval = reasonStr.includes('[PENDING_APPROVAL]');
 
               let cleanReason = reasonStr;
@@ -300,8 +367,8 @@ export function PatientDashboardClient({
               } else if (isPatientWaiting) {
                 statusVal = 'patient_waiting';
               } else if (isDoctorInRoom) {
-                statusVal = 'doctor_in_room';
-              } else if (isCallActive) {
+                statusVal = 'in_progress';
+              } else if (isCallActive || appt.status === 'in_progress') {
                 statusVal = 'in_progress';
               } else if (appt.status === 'booked') {
                 statusVal = isPendingApproval ? 'pending' : 'scheduled';
@@ -315,8 +382,12 @@ export function PatientDashboardClient({
 
               return {
                 ...appt,
+                id: appt.id,
+                roomId: appt.id,
+                appointment_id: appt.id,
                 status: statusVal,
-                call_active: isCallActive || isDoctorInRoom || isPatientWaiting || isPatientAdmitted,
+                is_doctor_in_room: isDoctorInRoom,
+                call_active: isCallActive || isDoctorInRoom || isPatientWaiting || isPatientAdmitted || statusVal === 'in_progress',
                 reason: cleanReason,
                 appointment_date: parsedDate,
                 time_slot: parsedTime,
@@ -331,7 +402,7 @@ export function PatientDashboardClient({
       } catch (err) {
         console.error("Failed to poll call state:", err);
       }
-    }, 2000);
+    }, 3500);
     return () => clearInterval(interval);
   }, [patientId]);
 
@@ -475,24 +546,42 @@ export function PatientDashboardClient({
         </div>
       </header>
 
-      {liveAppointment && (
-        <div className="bg-emerald-955/80 border-b border-emerald-500/30 backdrop-blur-md py-3.5 px-6 sticky top-[81px] z-20 shadow-[0_4px_30px_rgba(16,185,129,0.15)] animate-in fade-in slide-in-from-top duration-300">
-          <div className="container mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
-            <div className="flex items-center gap-2.5">
-              <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-400 animate-ping" />
-              <p className="text-sm font-bold text-white flex items-center gap-2">
-                <span>🚨</span>
-                <span>{liveAppointment.status === "doctor_in_room" ? "Doctor has started your consultation!" : `Dr. ${liveAppointment.doctor?.name || liveAppointment.doctor_name || "Assigned Doctor"} is ready for your consultation!`}</span>
-              </p>
+      {liveAppointment && (() => {
+        const rawDoctorName = liveAppointment.doctor?.name || liveAppointment.doctor_name || "Rahul Sharma";
+        const formattedDoctorName = rawDoctorName.startsWith('Dr.') ? rawDoctorName : `Dr. ${rawDoctorName}`;
+        return (
+          <div className="border-b border-emerald-500/40 backdrop-blur-md py-4 px-6 sticky top-[81px] z-20 animate-in fade-in slide-in-from-top duration-300"
+            style={{
+              background: 'linear-gradient(135deg, rgba(6,95,70,0.85) 0%, rgba(15,23,42,0.92) 50%, rgba(6,95,70,0.85) 100%)',
+              boxShadow: '0 0 40px rgba(16,185,129,0.3), 0 0 80px rgba(16,185,129,0.15), inset 0 1px 0 rgba(16,185,129,0.2)',
+              animation: 'livePulseGlow 2s ease-in-out infinite'
+            }}>
+            <style>{`
+              @keyframes livePulseGlow {
+                0%, 100% { box-shadow: 0 0 40px rgba(16,185,129,0.3), 0 0 80px rgba(16,185,129,0.15), inset 0 1px 0 rgba(16,185,129,0.2); }
+                50% { box-shadow: 0 0 60px rgba(16,185,129,0.5), 0 0 120px rgba(16,185,129,0.25), inset 0 1px 0 rgba(16,185,129,0.3); }
+              }
+            `}</style>
+            <div className="container mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
+              <div className="flex items-center gap-3">
+                <span className="relative flex h-3.5 w-3.5 shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500"></span>
+                </span>
+                <p className="text-sm font-bold text-white flex items-center gap-2">
+                  <span className="text-base">🔴</span>
+                  {formattedDoctorName} has started your consultation and is waiting in the room!
+                </p>
+              </div>
+              <Button asChild size="sm" className="bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl shadow-lg shadow-emerald-600/40 px-6 py-2.5 text-xs font-extrabold shrink-0 animate-pulse border border-emerald-400">
+                <Link href={`/consultation/${liveAppointment.id}`} className="flex items-center gap-2">
+                  <Video className="w-4 h-4" /> Join Now
+                </Link>
+              </Button>
             </div>
-            <Button asChild size="sm" className="bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl shadow-lg shadow-emerald-500/25 px-5 py-2 animate-pulse text-xs font-bold shrink-0">
-              <Link href={`/consultation/${liveAppointment.id}`}>
-                Join Consultation
-              </Link>
-            </Button>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       <main className="container mx-auto px-6 py-8">
         <section className="mb-8 rounded-3xl border border-slate-900 bg-slate-900/20 backdrop-blur-md p-6 relative overflow-hidden shadow-2xl">

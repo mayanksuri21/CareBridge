@@ -119,6 +119,19 @@ export function TodayConsultations({ doctorId, initialConsultations = [] }: Toda
     setLoading(false)
   }, [doctorId])
 
+  const handleStartConsultation = async (appointmentId: string) => {
+    try {
+      await fetch('/api/appointments/call', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ appointment_id: appointmentId, action: 'start' }),
+      });
+    } catch (e) {
+      console.error("Failed to signal doctor start:", e);
+    }
+    window.location.href = `/consultation/${appointmentId}`;
+  };
+
   useEffect(() => {
     refresh()
 
@@ -256,10 +269,13 @@ export function TodayConsultations({ doctorId, initialConsultations = [] }: Toda
                       <TableCell>
                         <div className="flex justify-end gap-2">
                           {canJoin && (
-                            <Button asChild size="sm" variant="default" className="gap-1.5">
-                              <a href={`/consultation/${consultation.id}`}>
-                                <Video className="h-3.5 w-3.5" /> Join Video Call
-                              </a>
+                            <Button
+                              size="sm"
+                              variant="default"
+                              className="gap-1.5 cursor-pointer"
+                              onClick={() => handleStartConsultation(consultation.id)}
+                            >
+                              <Video className="h-3.5 w-3.5" /> Join Video Call
                             </Button>
                           )}
                           <PatientHistoryModal doctorId={doctorId} patient={patient} />

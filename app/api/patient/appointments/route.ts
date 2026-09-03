@@ -69,18 +69,49 @@ export async function GET(request: Request) {
       const dateMatch = reasonStr.match(/Selected Date:\s*([^\n\r]*)/i) || reasonStr.match(/Preferred Date:\s*([^\n\r]*)/i);
       const timeMatch = reasonStr.match(/Time Slot:\s*([^\n\r]*)/i);
       
+      const isDeclined = apt.status === 'cancelled' || apt.status === 'rejected' || apt.status === 'declined' || reasonStr.includes('Declined:') || reasonStr.includes('[PATIENT_DECLINED]');
+      
+      const isDoctorInRoom = !isDeclined && reasonStr.includes('[DOCTOR_IN_ROOM]');
+      const isPatientWaiting = !isDeclined && reasonStr.includes('[PATIENT_WAITING]');
+      const isPatientAdmitted = !isDeclined && reasonStr.includes('[PATIENT_ADMITTED]');
+      const isCallActive = !isDeclined && reasonStr.includes('[CALL_ACTIVE]');
+      const isPendingApproval = reasonStr.includes('[PENDING_APPROVAL]');
+
       let cleanReason = reasonStr;
       const splitIndex = reasonStr.search(/(Symptoms:|Preferred Date:|Selected Date:|Time Slot:)/i);
       if (splitIndex !== -1) {
         cleanReason = reasonStr.substring(0, splitIndex).trim();
       }
-      
+      ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]'].forEach(tag => {
+        cleanReason = cleanReason.replace(` ${tag}`, '').replace(tag, '');
+      });
+      cleanReason = cleanReason.trim();
+
+      let statusVal = apt.status || 'scheduled';
+      if (isDeclined) {
+        statusVal = 'declined';
+      } else if (isPatientAdmitted) {
+        statusVal = 'patient_admitted';
+      } else if (isPatientWaiting) {
+        statusVal = 'patient_waiting';
+      } else if (isDoctorInRoom) {
+        statusVal = 'in_progress';
+      } else if (isCallActive || apt.status === 'in_progress') {
+        statusVal = 'in_progress';
+      } else if (apt.status === 'booked') {
+        statusVal = isPendingApproval ? 'pending' : 'scheduled';
+      } else if (apt.status === 'cancelled' || apt.status === 'rejected' || apt.status === 'declined') {
+        statusVal = 'declined';
+      }
+
       const parsedDate = dateMatch ? dateMatch[1].trim() : (apt.appointment_date || (apt.scheduled_at ? new Date(apt.scheduled_at).toISOString().split('T')[0] : '2026-08-17'));
       const parsedTime = timeMatch ? timeMatch[1].trim() : (apt.time_slot || '02:00 PM');
       const parsedSymptoms = symptomsMatch ? symptomsMatch[1].trim() : (apt.symptoms || '');
 
       return {
         id: apt.id,
+        roomId: apt.id,
+        appointment_id: apt.id,
         doctor_id: apt.doctor_id,
         doctor: {
           id: apt.doctor_id,
@@ -91,8 +122,11 @@ export async function GET(request: Request) {
         appointment_date: parsedDate,
         time_slot: parsedTime,
         symptoms: parsedSymptoms,
-        status: apt.status || 'scheduled',
+        status: statusVal,
+        is_doctor_in_room: isDoctorInRoom,
+        call_active: isCallActive || isDoctorInRoom || isPatientWaiting || isPatientAdmitted || statusVal === 'in_progress',
         reason: cleanReason || 'General Consultation',
+        raw_reason: reasonStr,
         created_at: apt.created_at
       };
     });

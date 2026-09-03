@@ -17,7 +17,33 @@ export async function GET(request: Request) {
       .select('*')
       .order('created_at', { ascending: false });
 
-    return new NextResponse(JSON.stringify({ appointments: data || [] }), {
+    const formatted = (data || []).map((appt: any) => {
+      const reasonStr = appt.reason || '';
+      const isDeclined = appt.status === 'cancelled' || appt.status === 'rejected' || appt.status === 'declined' || reasonStr.includes('Declined:') || reasonStr.includes('[PATIENT_DECLINED]');
+
+      const isDoctorInRoom = !isDeclined && reasonStr.includes('[DOCTOR_IN_ROOM]');
+      const isPatientWaiting = !isDeclined && reasonStr.includes('[PATIENT_WAITING]');
+      const isPatientAdmitted = !isDeclined && reasonStr.includes('[PATIENT_ADMITTED]');
+      const isCallActive = !isDeclined && (reasonStr.includes('[CALL_ACTIVE]') || isDoctorInRoom);
+
+      let statusVal = appt.status;
+      if (isDeclined) {
+        statusVal = 'declined';
+      } else if (isDoctorInRoom || isCallActive) {
+        statusVal = 'in_progress';
+      }
+
+      return {
+        ...appt,
+        roomId: appt.id,
+        appointment_id: appt.id,
+        is_doctor_in_room: isDoctorInRoom,
+        call_active: isCallActive,
+        status: statusVal
+      };
+    });
+
+    return new NextResponse(JSON.stringify({ appointments: formatted }), {
       status: 200,
       headers: {
         'Cache-Control': 'no-store, no-cache, must-revalidate',

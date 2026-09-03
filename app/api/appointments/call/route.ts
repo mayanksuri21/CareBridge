@@ -62,22 +62,22 @@ export async function POST(request: Request) {
 
     if (action === 'start') {
       reasonText = `${cleanReason} [DOCTOR_IN_ROOM] [CALL_ACTIVE]`;
-      statusText = 'booked';
+      statusText = 'in_progress';
     } else if (action === 'join_waiting') {
       reasonText = `${cleanReason} [PATIENT_WAITING] [CALL_ACTIVE]`;
       statusText = 'booked';
     } else if (action === 'admit') {
       reasonText = `${cleanReason} [PATIENT_ADMITTED] [CALL_ACTIVE]`;
-      statusText = 'booked';
+      statusText = 'in_progress';
     } else if (action === 'decline_admission') {
       reasonText = `${cleanReason} [PATIENT_DECLINED]`;
-      statusText = 'declined';
+      statusText = 'cancelled';
     } else if (action === 'end' || action === 'complete') {
       reasonText = cleanReason;
       statusText = 'completed';
     }
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('appointments')
       .update({
         reason: reasonText,
@@ -87,21 +87,42 @@ export async function POST(request: Request) {
       .select()
       .maybeSingle();
 
+    if (error && (error.message.includes("check constraint") || error.code === "23514")) {
+      console.warn("[call-api] status violates DB constraint, falling back to preserving valid status");
+      const fallbackStatus = (statusText === 'declined' || statusText === 'cancelled')
+        ? 'cancelled'
+        : (currentAppt.status || 'scheduled');
+      const fallback = await supabase
+        .from('appointments')
+        .update({
+          reason: reasonText,
+          status: fallbackStatus
+        })
+        .eq('id', appointment_id)
+        .select()
+        .maybeSingle();
+      data = fallback.data;
+      error = fallback.error;
+    }
+
     if (error) {
       console.error("Update appointment call status error:", error.message);
       throw error;
     }
 
     // Release the linked schedule slot when the appointment is declined or completed.
-    if (statusText === 'declined' || statusText === 'completed') {
+    if (statusText === 'declined' || statusText === 'cancelled' || statusText === 'completed') {
       await releaseSlot(supabase, appointment_id);
     }
 
     return NextResponse.json({ 
       success: true, 
-      status: statusText,
+      status: action === 'start' ? 'in_progress' : statusText, 
       reason: reasonText,
-      appointment_id 
+      appointment_id,
+      roomId: appointment_id,
+      is_doctor_in_room: action === 'start' || reasonText.includes('[DOCTOR_IN_ROOM]'),
+      call_active: true
     });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
@@ -137,7 +158,7 @@ export async function GET(request: Request) {
         statusVal = 'patient_waiting';
       } else if (isDoctorInRoom) {
         statusVal = 'doctor_in_room';
-      } else if (isCallActive) {
+      } else if (isCallActive || appt.status === 'in_progress') {
         statusVal = 'in_progress';
       } else if (appt.status === 'pending' || (appt.status === 'booked' && isPendingApprovalTag)) {
         statusVal = 'pending';
@@ -149,9 +170,13 @@ export async function GET(request: Request) {
 
       return {
         ...appt,
+        id: appt.id,
+        appointment_id: appt.id,
+        roomId: appt.id,
         status: statusVal,
-        call_active: isCallActive || isDoctorInRoom || isPatientWaiting || isPatientAdmitted,
+        call_active: isCallActive || isDoctorInRoom || isPatientWaiting || isPatientAdmitted || statusVal === 'in_progress' || statusVal === 'doctor_in_room',
         reason: cleanReason,
+        raw_reason: reasonStr,
         is_doctor_in_room: isDoctorInRoom,
         is_patient_waiting: isPatientWaiting,
         is_patient_admitted: isPatientAdmitted,

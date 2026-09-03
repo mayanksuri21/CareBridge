@@ -152,6 +152,27 @@ function parseTimeString(timeStr: string): {
   return { label: timeStr, hour: 12, minute: 0, durationMin: 45 };
 }
 
+function isSlotInPast(dateStr: string, timeStr: string): boolean {
+  if (!dateStr || !timeStr) return false;
+  try {
+    const d = parseDateSafely(dateStr);
+    if (!d) return false;
+    const timeInfo = parseTimeString(timeStr);
+    const slotDate = new Date(
+      d.getFullYear(),
+      d.getMonth(),
+      d.getDate(),
+      timeInfo.hour,
+      timeInfo.minute,
+      0,
+      0,
+    );
+    return slotDate.getTime() <= Date.now();
+  } catch {
+    return false;
+  }
+}
+
 // Default fallback slots matching doctor dashboard configuration
 const DEFAULT_SLOTS = ["10:30 AM", "12:00 PM", "02:00 PM", "02:30 PM"];
 
@@ -287,10 +308,12 @@ export default function BookConsultationPage() {
       cancelled = true;
     };
   }, [selectedDoctor, selectedDate, supabase]);
-  const todayISO = useMemo(() => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d.toISOString().slice(0, 10);
+  const tomorrowISO = useMemo(() => {
+    const d = new Date(Date.now() + 86400000);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
   }, []);
 
   const selectedDoctorData =
@@ -368,6 +391,13 @@ export default function BookConsultationPage() {
       return;
     }
 
+    if (selectedDate < tomorrowISO) {
+      toast.error(
+        "Advance Booking Required: Appointments must be booked at least 24 hours in advance (from tomorrow onwards). Same-day appointments are unavailable.",
+      );
+      return;
+    }
+
     setBooking(true);
     const appointmentId = crypto.randomUUID();
 
@@ -376,6 +406,12 @@ export default function BookConsultationPage() {
       const slot = activeSlotsForSelectedDoctor[slotIdx] || {
         label: "12:00 PM",
       };
+
+      if (isSlotInPast(selectedDate, slot.label)) {
+        toast.error("This time slot has already passed. Please select a future time slot.");
+        setBooking(false);
+        return;
+      }
 
       // ── Step 1: Resolve authenticated user ──────────────────────────
       // Use user.id from AuthProvider context directly. This avoids
@@ -708,15 +744,34 @@ export default function BookConsultationPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <label className="text-sm font-medium text-foreground mb-2 block">
-                        Preferred Date
-                      </label>
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-medium text-foreground block">
+                          Preferred Date
+                        </label>
+                        <span className="text-[11px] text-amber-500 font-medium flex items-center gap-1">
+                          <AlertCircle className="w-3 h-3" /> Min 24 hrs advance
+                        </span>
+                      </div>
                       <Input
                         type="date"
-                        min={todayISO}
+                        min={tomorrowISO}
                         value={selectedDate}
-                        onChange={(e) => setSelectedDate(e.target.value)}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val && val < tomorrowISO) {
+                            toast.error(
+                              "Advance booking required: Today and past dates are unavailable. Please choose tomorrow or later.",
+                            );
+                            setSelectedDate("");
+                            return;
+                          }
+                          setSelectedDate(val);
+                        }}
+                        className="cursor-pointer disabled:cursor-not-allowed"
                       />
+                      <p className="text-[11px] text-muted-foreground">
+                        Same-day and past dates are disabled. Appointments must be scheduled at least 24 hours in advance.
+                      </p>
                     </div>
 
                     <div className="space-y-2">
@@ -761,15 +816,25 @@ export default function BookConsultationPage() {
                             const isSlotBooked = bookedSlotsForDate.includes(
                               s.label,
                             );
+                            const isPast = isSlotInPast(selectedDate, s.label);
+                            const isUnavailable = isSlotBooked || isPast;
+
                             return (
                               <SelectItem
                                 key={s.label + idx}
                                 value={String(idx)}
-                                disabled={isSlotBooked}
+                                disabled={isUnavailable}
                               >
                                 <div className="flex items-center">
                                   <Clock className="w-4 h-4 mr-2 text-primary" />
-                                  {s.label} {isSlotBooked ? "(Booked)" : ""}
+                                  <span className={isUnavailable ? "line-through opacity-50" : ""}>
+                                    {s.label}
+                                  </span>
+                                  {isSlotBooked ? (
+                                    <span className="ml-2 text-red-400 text-xs font-semibold">(Booked)</span>
+                                  ) : isPast ? (
+                                    <span className="ml-2 text-amber-400 text-xs font-semibold">(Past)</span>
+                                  ) : null}
                                 </div>
                               </SelectItem>
                             );
@@ -818,7 +883,8 @@ export default function BookConsultationPage() {
                               const isSlotBooked = bookedSlotsForDate.includes(
                                 s.label,
                               );
-                              const isDisabled = !selectedDate || isSlotBooked;
+                              const isPast = isSlotInPast(selectedDate, s.label);
+                              const isDisabled = !selectedDate || isSlotBooked || isPast;
                               const active = selectedSlotIndex === String(idx);
 
                               let chipClass =
@@ -838,14 +904,22 @@ export default function BookConsultationPage() {
                                 <button
                                   key={s.label + idx}
                                   type="button"
-                                  onClick={() =>
-                                    setSelectedSlotIndex(String(idx))
-                                  }
+                                  onClick={() => {
+                                    if (!isDisabled) {
+                                      setSelectedSlotIndex(String(idx));
+                                    }
+                                  }}
                                   disabled={isDisabled}
                                   className={chipClass}
+                                  title={isPast ? "This slot has already passed" : isSlotBooked ? "Slot already booked" : s.label}
                                 >
                                   <Clock className="h-3 w-3 inline mr-1.5 align-[-2px]" />
                                   {s.label}
+                                  {isPast && (
+                                    <span className="ml-1 text-[10px] text-amber-400 font-normal no-underline">
+                                      (Past)
+                                    </span>
+                                  )}
                                 </button>
                               );
                             })
@@ -933,6 +1007,7 @@ export default function BookConsultationPage() {
                       disabled={
                         !selectedDoctor ||
                         !selectedDate ||
+                        selectedDate < tomorrowISO ||
                         selectedSlotIndex === "" ||
                         !reason ||
                         booking ||
