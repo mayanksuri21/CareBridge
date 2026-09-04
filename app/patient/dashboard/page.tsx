@@ -114,7 +114,7 @@ export default async function PatientDashboardPage() {
     .from("appointments")
     .select("id, doctor_id, slot_id, status, reason, created_at")
     .eq("patient_id", user.id)
-    .in("status", ["scheduled", "pending", "booked", "confirmed", "declined", "cancelled", "in_progress"])
+    .in("status", ["scheduled", "pending", "booked", "confirmed", "declined", "cancelled", "in_progress", "completed"])
     .order("created_at", { ascending: false })
 
   let initialApptsMapped: any[] = []
@@ -159,14 +159,18 @@ export default async function PatientDashboardPage() {
       const parsedSymptoms = symptomsMatch ? symptomsMatch[1].trim() : ''
 
       let statusVal = apt.status || 'scheduled'
-      if (isPatientAdmitted) {
+      if (apt.status === 'completed') {
+        statusVal = 'completed'
+      } else if (isPatientAdmitted) {
         statusVal = 'patient_admitted'
       } else if (isPatientWaiting) {
         statusVal = 'patient_waiting'
       } else if (isDoctorInRoom) {
         statusVal = 'in_progress'
-      } else if (isCallActive || apt.status === 'in_progress') {
+      } else if (apt.status === 'in_progress') {
         statusVal = 'in_progress'
+      } else if (apt.status === 'confirmed') {
+        statusVal = 'confirmed'
       } else if (apt.status === 'booked') {
         statusVal = isPendingApproval ? 'pending' : 'scheduled'
       }
@@ -187,7 +191,7 @@ export default async function PatientDashboardPage() {
         symptoms: parsedSymptoms,
         status: statusVal,
         is_doctor_in_room: isDoctorInRoom,
-        call_active: isCallActive || isDoctorInRoom || statusVal === 'in_progress',
+        call_active: statusVal !== 'completed' && (isDoctorInRoom || statusVal === 'in_progress' || isPatientWaiting || isPatientAdmitted),
         reason: cleanReason || 'General Consultation',
         raw_reason: reasonStr,
         created_at: apt.created_at

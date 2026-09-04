@@ -195,9 +195,9 @@ export function PatientDashboardClient({
 
   const liveAppointment = appointments.find((appt) => {
     const isDeclined = appt.status === "declined" || appt.status === "cancelled" || appt.status === "rejected" || appt.reason?.includes("Declined:");
-    if (isDeclined) return false;
-    if (appt.status === "scheduled" || appt.status === "booked" || appt.status === "pending") return false;
-    return appt.status === "in_progress" || appt.status === "doctor_in_room";
+    if (isDeclined || appt.status === "completed") return false;
+    if (appt.status === "scheduled" || appt.status === "booked" || appt.status === "pending" || appt.status === "confirmed") return false;
+    return appt.status === "in_progress" || appt.status === "doctor_in_room" || (Boolean(appt.is_doctor_in_room) && appt.status !== "scheduled" && appt.status !== "booked" && appt.status !== "confirmed");
   })
 
   const playedChimeForApptIdRef = useRef<string | null>(null)
@@ -280,7 +280,9 @@ export function PatientDashboardClient({
         });
 
         let statusVal = appt.status;
-        if (isDeclined) {
+        if (appt.status === 'completed') {
+          statusVal = 'completed';
+        } else if (isDeclined) {
           statusVal = 'declined';
         } else if (isPatientAdmitted) {
           statusVal = 'patient_admitted';
@@ -290,6 +292,10 @@ export function PatientDashboardClient({
           statusVal = 'doctor_in_room';
         } else if (isCallActive || appt.status === 'in_progress') {
           statusVal = 'in_progress';
+        } else if (appt.status === 'confirmed') {
+          statusVal = 'confirmed';
+        } else if (appt.status === 'scheduled') {
+          statusVal = 'scheduled';
         } else if (appt.status === 'booked') {
           statusVal = isPendingApproval ? 'pending' : 'scheduled';
         }
@@ -362,14 +368,22 @@ export function PatientDashboardClient({
               });
 
               let statusVal = appt.status;
-              if (isPatientAdmitted) {
+              if (appt.status === 'completed') {
+                statusVal = 'completed';
+              } else if (isPatientDeclined) {
+                statusVal = 'declined';
+              } else if (isDoctorInRoom) {
+                statusVal = 'in_progress';
+              } else if (isPatientAdmitted) {
                 statusVal = 'patient_admitted';
               } else if (isPatientWaiting) {
                 statusVal = 'patient_waiting';
-              } else if (isDoctorInRoom) {
+              } else if (appt.status === 'in_progress') {
                 statusVal = 'in_progress';
-              } else if (isCallActive || appt.status === 'in_progress') {
-                statusVal = 'in_progress';
+              } else if (appt.status === 'confirmed') {
+                statusVal = 'confirmed';
+              } else if (appt.status === 'scheduled') {
+                statusVal = 'scheduled';
               } else if (appt.status === 'booked') {
                 statusVal = isPendingApproval ? 'pending' : 'scheduled';
               }
@@ -387,7 +401,7 @@ export function PatientDashboardClient({
                 appointment_id: appt.id,
                 status: statusVal,
                 is_doctor_in_room: isDoctorInRoom,
-                call_active: isCallActive || isDoctorInRoom || isPatientWaiting || isPatientAdmitted || statusVal === 'in_progress',
+                call_active: statusVal !== 'completed' && (isDoctorInRoom || statusVal === 'in_progress' || isPatientWaiting || isPatientAdmitted),
                 reason: cleanReason,
                 appointment_date: parsedDate,
                 time_slot: parsedTime,

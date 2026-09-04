@@ -22,7 +22,24 @@ type MedicineInput = {
 export default function ConsultationRoom() {
   const params = useParams();
   const router = useRouter();
-  const roomId = (params?.appointmentId || params?.id) as string;
+  const isTypingNotesRef = useRef(false);
+
+  // Robust appointment ID extraction across Next.js App Router param variants
+  const rawAppointmentId = (params?.appointmentId || params?.id) as string | string[] | undefined;
+  // Fail-safe appointment ID extraction
+  const appointmentId = useMemo(() => {
+    const raw = (params?.appointmentId || params?.id) as any;
+    if (typeof raw === 'string' && raw) return raw;
+    if (Array.isArray(raw) && raw[0]) return raw[0];
+    if (typeof window !== 'undefined') {
+      const parts = window.location.pathname.split('/');
+      const lastPart = parts[parts.length - 1];
+      if (lastPart && lastPart !== 'consultation') return lastPart;
+    }
+    return '';
+  }, [params]);
+
+  const roomId = appointmentId || (typeof window !== 'undefined' ? window.location.pathname.split('/').filter(Boolean).pop() || '' : '');
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
 
   // WebRTC Stream Elements Refs
@@ -40,6 +57,7 @@ export default function ConsultationRoom() {
     roomRef.current = new Room({
       adaptiveStream: true,
       dynacast: true,
+      autoSubscribe: true, // CRITICAL: Ensures incoming video/audio feeds are pulled automatically
     });
   }
   const room = roomRef.current;
@@ -75,6 +93,40 @@ export default function ConsultationRoom() {
   const [medicines, setMedicines] = useState<MedicineInput[]>([]);
   const [medInput, setMedInput] = useState<MedicineInput>({ name: '', dosage: '', duration: '', instructions: '' });
   const [sendingPrescription, setSendingPrescription] = useState(false);
+
+  // Leave vs End Call Modal State (Google Meet style for Doctor)
+  const [showDoctorEndModal, setShowDoctorEndModal] = useState(false);
+  const [isEndingCall, setIsEndingCall] = useState(false);
+
+  // Helper to normalize appointment tags into structured properties
+  const normalizeAppointment = useCallback((appt: any) => {
+    if (!appt) return null;
+    const reasonStr = appt.reason || appt.raw_reason || '';
+    const isDoctorInRoom = reasonStr.includes('[DOCTOR_IN_ROOM]') || Boolean(appt.is_doctor_in_room);
+    const isPatientWaiting = reasonStr.includes('[PATIENT_WAITING]') || Boolean(appt.is_patient_waiting);
+    const isPatientAdmitted = reasonStr.includes('[PATIENT_ADMITTED]') || Boolean(appt.is_patient_admitted);
+    const isPatientDeclined = reasonStr.includes('[PATIENT_DECLINED]') || Boolean(appt.is_patient_declined);
+    const isCallActive = reasonStr.includes('[CALL_ACTIVE]') || Boolean(appt.call_active);
+
+    let cleanReason = reasonStr;
+    ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]'].forEach(tag => {
+      cleanReason = cleanReason.replace(` ${tag}`, '').replace(tag, '');
+    });
+
+    return {
+      ...appt,
+      id: appt.id,
+      appointment_id: appt.id,
+      roomId: appt.id,
+      reason: cleanReason,
+      raw_reason: reasonStr,
+      is_doctor_in_room: appt.status !== 'completed' && isDoctorInRoom,
+      is_patient_waiting: appt.status !== 'completed' && isPatientWaiting,
+      is_patient_admitted: appt.status !== 'completed' && isPatientAdmitted,
+      is_patient_declined: isPatientDeclined,
+      call_active: appt.status !== 'completed' && (isCallActive || isDoctorInRoom || isPatientWaiting || isPatientAdmitted || appt.status === 'in_progress')
+    };
+  }, []);
 
   // 1. Fetch current user and profile role
   useEffect(() => {
@@ -128,48 +180,121 @@ export default function ConsultationRoom() {
     const timer = setTimeout(() => {
       setLoadingUser(false);
       setLoadingAppt(false);
-    }, 2500);
+    }, 8000);
     return () => clearTimeout(timer);
   }, []);
 
-  // 2. Fetch appointment data
-  const loadAppointment = useCallback(async () => {
-    if (!roomId) return;
-    try {
-      const res = await fetch(`/api/appointments/call?appointment_id=${roomId}`);
-      const json = await res.json();
-      if (json?.appointment) {
-        setAppointment(json.appointment);
+  // 2. Fetch appointment data with Supabase join and robust API fallbacks
+  const loadAppointment = useCallback(async (retryCount = 0) => {
+    const effectiveId = appointmentId || (typeof window !== 'undefined' ? window.location.pathname.split('/').filter(Boolean).pop() : '');
 
-        // Load clinical notes from reason column if present
-        const notesMatch = json.appointment.reason?.match(/\[CLINICAL_NOTES\]:\s*([\s\S]*)/i);
+    if (!effectiveId || effectiveId === 'consultation') {
+      if (retryCount < 5) {
+        setTimeout(() => loadAppointment(retryCount + 1), 300);
+      } else {
+        setLoadingAppt(false);
+      }
+      return;
+    }
+
+    try {
+      let apptData: any = null;
+
+      // 1. PRIMARY: Query service role admin API first (Bypasses Supabase RLS for Patient)
+      try {
+        const apiRes = await fetch(`/api/appointments/call?appointment_id=${effectiveId}`, {
+          cache: 'no-store'
+        });
+        if (apiRes.ok) {
+          const apiJson = await apiRes.json();
+          if (apiJson?.appointment) {
+            apptData = apiJson.appointment;
+          }
+        }
+      } catch (apiErr) {
+        console.warn("Primary call API fetch error:", apiErr);
+      }
+
+      // 2. SECONDARY: Fallback to direct Supabase query if API didn't return data
+      if (!apptData) {
+        try {
+          const { data: simpleData } = await supabase
+            .from('appointments')
+            .select('*')
+            .eq('id', effectiveId)
+            .maybeSingle();
+
+          if (simpleData) {
+            apptData = simpleData;
+          }
+        } catch (dbErr) {
+          console.error("Supabase direct fetch error:", dbErr);
+        }
+      }
+
+      // 3. TERTIARY: Details API fallback
+      if (!apptData) {
+        try {
+          const detRes = await fetch(`/api/appointments/details?id=${effectiveId}`, {
+            cache: 'no-store'
+          });
+          if (detRes.ok) {
+            const detJson = await detRes.json();
+            if (detJson?.appointment) {
+              apptData = detJson.appointment;
+            }
+          }
+        } catch (detErr) {
+          console.warn("Details API fetch error:", detErr);
+        }
+      }
+
+      // Apply fetched appointment data
+      if (apptData) {
+        const normalized = typeof normalizeAppointment === 'function' ? normalizeAppointment(apptData) : apptData;
+        setAppointment((prev: any) => ({ ...prev, ...normalized }));
+
+        // Load clinical notes without overwriting while typing
+        const notesMatch = (apptData.reason || apptData.raw_reason)?.match(/\[CLINICAL_NOTES\]:\s*([\s\S]*)/i);
         const notesVal = notesMatch ? notesMatch[1].trim() : '';
-        setClinicalNotes(notesVal);
+        if (notesVal && !isTypingNotesRef.current) {
+          setClinicalNotes((prev) => (prev && prev.trim() !== '' ? prev : notesVal));
+        }
+        setLoadingAppt(false);
+        return;
+      }
+
+      // Retry if not fetched yet
+      if (retryCount < 3) {
+        setTimeout(() => loadAppointment(retryCount + 1), 600);
+        return;
       }
     } catch (err) {
       console.error("Room fetch error:", err);
     } finally {
-      setLoadingAppt(false);
+      if (retryCount >= 3) {
+        setLoadingAppt(false);
+      }
     }
-  }, [roomId]);
+  }, [appointmentId, supabase, normalizeAppointment]);
 
   // 3. Polling fallback + Realtime listener to sync state changes immediately
   useEffect(() => {
-    loadAppointment();
-    const interval = setInterval(loadAppointment, 3000);
+    loadAppointment(0);
+    const interval = setInterval(() => loadAppointment(0), 3000);
 
     const channel = supabase
-      .channel(`consultation-room-${roomId}`)
+      .channel(`consultation-room-${appointmentId}`)
       .on(
         "postgres_changes",
         {
           event: "UPDATE",
           schema: "public",
           table: "appointments",
-          filter: `id=eq.${roomId}`,
+          filter: `id=eq.${appointmentId}`,
         },
         () => {
-          loadAppointment();
+          loadAppointment(0);
         }
       )
       .subscribe();
@@ -178,32 +303,29 @@ export default function ConsultationRoom() {
       clearInterval(interval);
       void supabase.removeChannel(channel);
     };
-  }, [roomId, supabase, loadAppointment]);
+  }, [appointmentId, supabase, loadAppointment]);
 
   // Determine user role and call view eligibility
   const isDoctorById = Boolean(
     currentUser &&
     appointment &&
-    appointment.doctor_id &&
-    currentUser.id === appointment.doctor_id
+    (
+      (appointment.doctor_id && currentUser.id === appointment.doctor_id) ||
+      (appointment.doctor?.email && currentUser.email === appointment.doctor.email)
+    )
   );
   const isDoctorRole =
     userRole === 'doctor' ||
     currentUser?.user_metadata?.role === 'doctor' ||
-    (typeof window !== 'undefined' && (document.referrer.includes('/doctor') || window.location.search.includes('role=doctor')));
+    currentUser?.role === 'doctor' ||
+    (typeof window !== 'undefined' && (
+      document.referrer.includes('/doctor') ||
+      window.location.search.includes('role=doctor') ||
+      window.location.pathname.includes('/doctor')
+    ));
 
   // The logged-in user is a Doctor if their ID matches appointment.doctor_id OR their profile/metadata role is 'doctor'
   const isDoctor = Boolean(isDoctorById || isDoctorRole);
-
-  // Ensure that for the Doctor role, all loading states immediately unblock
-  useEffect(() => {
-    if (isDoctor) {
-      setLoadingUser(false);
-      if (appointment) {
-        setLoadingAppt(false);
-      }
-    }
-  }, [isDoctor, appointment]);
 
   // The user is ONLY a Patient if they are NOT a doctor
   const isPatientById = Boolean(
@@ -215,52 +337,76 @@ export default function ConsultationRoom() {
   const isPatientRole = userRole === 'patient' || currentUser?.user_metadata?.role === 'patient';
   const isPatient = !isDoctor && (isPatientById || isPatientRole || (!isDoctor && !isDoctorById));
 
+  // Safe Debug Log (Placed after both isDoctor and isPatient are declared)
+  console.log("DEBUG ROLES:", {
+    currentUserId: currentUser?.id,
+    currentUserRole: userRole,
+    currentUserMetaRole: currentUser?.user_metadata?.role,
+    appointmentDoctorId: appointment?.doctor_id,
+    appointmentPatientId: appointment?.patient_id,
+    isDoctor,
+    isPatient,
+    appointmentStatus: appointment?.status,
+    isPatientAdmitted: appointment?.is_patient_admitted
+  });
+
+  // Ensure that for the Doctor role, all loading states immediately unblock
+  useEffect(() => {
+    if (isDoctor) {
+      setLoadingUser(false);
+      if (appointment) {
+        setLoadingAppt(false);
+      }
+    }
+  }, [isDoctor, appointment]);
+
   const loading = loadingUser || loadingAppt;
 
-  // The call view is immediately visible for the doctor, or for an admitted patient who clicked join
-  const showCallView = isDoctor || (isPatient && appointment?.is_patient_admitted && patientJoinClicked);
+  // The call view is immediately visible for the doctor, or for an admitted / in_progress patient who clicked join
+  const isAdmittedOrActive = Boolean(appointment?.is_patient_admitted || appointment?.status === 'in_progress');
+  const showCallView = isDoctor || (isPatient && isAdmittedOrActive && patientJoinClicked);
+
+  // Auto-set patientJoinClicked if patient rejoins an in-progress consultation
+  useEffect(() => {
+    if (isPatient && (appointment?.status === 'in_progress' || appointment?.is_patient_admitted) && !patientJoinClicked) {
+      setPatientJoinClicked(true);
+    }
+  }, [isPatient, appointment?.status, appointment?.is_patient_admitted, patientJoinClicked]);
 
   // 4. Fetch LiveKit Token for authorized users
   useEffect(() => {
-    if (!appointment || !currentUser || token) return;
+    if (!appointment || !currentUser || token || appointment.status === 'completed') return;
 
-    if (isDoctor || (isPatient && appointment?.is_patient_admitted && patientJoinClicked)) {
+    // Doctor enters directly; Patient only enters once admitted OR join clicked OR status in_progress
+    const canPatientConnect = Boolean(
+      appointment.is_patient_admitted ||
+      appointment.status === 'in_progress' ||
+      patientJoinClicked
+    );
+
+    if (isDoctor || (isPatient && canPatientConnect)) {
       fetch('/api/livekit/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomName: roomId })
       })
-        .then(res => res.json())
-        .then(data => {
+        .then(async (res) => {
+          if (!res.ok) {
+            const errJson = await res.json().catch(() => ({}));
+            throw new Error(errJson.error || `HTTP ${res.status}`);
+          }
+          return res.json();
+        })
+        .then((data) => {
           if (data.token) {
             setToken(data.token);
-          } else {
-            console.error("LiveKit token error:", data.error);
           }
         })
-        .catch(err => console.error("Token fetch catch error:", err));
+        .catch((err) => {
+          console.warn("LiveKit token not ready yet:", err.message);
+        });
     }
-  }, [appointment, currentUser, token, roomId, patientJoinClicked, isDoctor, isPatient]);
-
-  // 4b. When the doctor enters the room, signal [DOCTOR_IN_ROOM] so the patient portal detects it
-  const hasSignaledDoctorInRoomRef = useRef(false);
-  useEffect(() => {
-    if (!roomId || !isDoctor) return;
-    if (hasSignaledDoctorInRoomRef.current) return;
-
-    hasSignaledDoctorInRoomRef.current = true;
-    fetch('/api/appointments/call', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ appointment_id: roomId, action: 'start' })
-    })
-      .then(() => loadAppointment())
-      .catch(err => {
-        console.error("Failed to signal doctor in room:", err);
-        hasSignaledDoctorInRoomRef.current = false;
-      });
-  }, [isDoctor, roomId, loadAppointment]);
-
+  }, [appointment, currentUser, token, roomId, isDoctor, isPatient, patientJoinClicked]);
   // 6. Camera & Microphone Media Stream Initialization (Task 3)
   useEffect(() => {
     if (!showCallView) return;
@@ -356,19 +502,18 @@ export default function ConsultationRoom() {
       if (!track) return;
 
       if (track.kind === 'video') {
-        setHasRemoteVideo(true);
-
-        const tryAttach = (attempts = 0) => {
-          const remoteEl = remoteVideoRef.current || (document.getElementById('remote-video') as HTMLVideoElement);
-          if (remoteEl) {
-            track.attach(remoteEl);
-            remoteEl.play().catch((err: any) => console.warn("Remote video play error:", err));
-          } else if (attempts < 8) {
-            setTimeout(() => tryAttach(attempts + 1), 100);
+        const bind = (attempts = 0) => {
+          const el = remoteVideoRef.current || (document.getElementById('remote-video') as HTMLVideoElement);
+          if (el) {
+            track.attach(el);
+            el.muted = false;
+            el.play().catch((err: any) => console.warn("Remote play warn:", err));
+            setHasRemoteVideo(true);
+          } else if (attempts < 15) {
+            setTimeout(() => bind(attempts + 1), 100);
           }
         };
-
-        tryAttach();
+        bind();
       } else if (track.kind === 'audio') {
         const audioId = `remote-audio-${track.sid || participant?.identity || 'peer'}`;
         let audioEl = document.getElementById(audioId) as HTMLAudioElement;
@@ -377,11 +522,10 @@ export default function ConsultationRoom() {
           audioEl.id = audioId;
           document.body.appendChild(audioEl);
         }
-        audioEl.play().catch((err: any) => console.warn("Remote audio play error:", err));
+        audioEl.play().catch(() => { });
       }
     };
-
-    const attachParticipantTracks = (participant: any) => {
+    const scanParticipantTracks = (participant: any) => {
       if (!participant) return;
       participant.trackPublications?.forEach((pub: any) => {
         if (pub.isSubscribed && pub.track) {
@@ -416,11 +560,39 @@ export default function ConsultationRoom() {
     };
 
     const onParticipantConnected = (participant: any) => {
-      attachParticipantTracks(participant);
+      scanParticipantTracks(participant);
     };
 
     const onParticipantDisconnected = () => {
       setHasRemoteVideo(false);
+    };
+
+    const onDataReceived = (payload: Uint8Array, participant?: any) => {
+      try {
+        const decoder = new TextDecoder();
+        const str = decoder.decode(payload);
+        const msg = JSON.parse(str);
+        if (msg?.type === 'MEETING_ENDED' || msg?.type === 'CALL_ENDED') {
+          toast.info("Doctor has ended the consultation.");
+          try {
+            if (localStreamRef.current) {
+              localStreamRef.current.getTracks().forEach((t) => t.stop());
+            }
+            for (const [, pub] of room.localParticipant.videoTrackPublications) {
+              if (pub.track) pub.track.stop();
+            }
+            for (const [, pub] of room.localParticipant.audioTrackPublications) {
+              if (pub.track) pub.track.stop();
+            }
+          } catch (_) { }
+          try {
+            room.disconnect();
+          } catch (_) { }
+          router.push('/patient/dashboard');
+        }
+      } catch (err) {
+        console.warn("LiveKit DataReceived error:", err);
+      }
     };
 
     room.on(RoomEvent.TrackSubscribed, onTrackSubscribed);
@@ -428,8 +600,35 @@ export default function ConsultationRoom() {
     room.on(RoomEvent.TrackPublished, onTrackPublished);
     room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
     room.on(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
+    room.on(RoomEvent.DataReceived, onDataReceived);
 
     let isCancelled = false;
+
+    // 1. Listen for dynamic incoming tracks when the other person publishes video/audio
+    const handleTrackSubscribed = (track: any, pub: any, participant: any) => {
+      console.log("[LiveKit] Remote track subscribed dynamic:", track.kind, participant?.identity);
+      attachRemoteTrack(track, participant);
+    };
+
+    const handleTrackUnsubscribed = (track: any) => {
+      console.log("[LiveKit] Remote track unsubscribed:", track.kind);
+      if (track.kind === 'video') {
+        setHasRemoteVideo(false);
+      }
+    };
+
+    const handleParticipantConnected = (participant: any) => {
+      console.log("[LiveKit] New participant connected to room:", participant?.identity);
+    };
+
+    // Remove existing to avoid duplicate listeners on hot-reloads
+    room.off(RoomEvent.TrackSubscribed, handleTrackSubscribed);
+    room.off(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
+    room.off(RoomEvent.ParticipantConnected, handleParticipantConnected);
+
+    room.on(RoomEvent.TrackSubscribed, handleTrackSubscribed);
+    room.on(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
+    room.on(RoomEvent.ParticipantConnected, handleParticipantConnected);
 
     async function connectRoom() {
       const livekitUrl = process.env.NEXT_PUBLIC_LIVEKIT_URL;
@@ -455,17 +654,30 @@ export default function ConsultationRoom() {
             localVideoRef.current.play().catch(() => { });
           }
 
-          // Attach any remote participants who were already in the room
+          // Scan existing participants already in room
           room.remoteParticipants.forEach((participant) => {
-            attachParticipantTracks(participant);
+            console.log("[LiveKit] Scanning existing participant:", participant.identity);
+            participant.trackPublications.forEach((pub: any) => {
+              if (pub.isSubscribed && pub.track) {
+                attachRemoteTrack(pub.track, participant);
+              } else if (typeof pub.setSubscribed === 'function') {
+                pub.setSubscribed(true);
+              }
+            });
           });
         } catch (connErr) {
           console.error("LiveKit connection failure:", connErr);
         }
       } else if (room.state === 'connected') {
-        // Room already connected, attach existing participants
+        // Room already connected, scan existing participants
         room.remoteParticipants.forEach((participant) => {
-          attachParticipantTracks(participant);
+          participant.trackPublications.forEach((pub: any) => {
+            if (pub.isSubscribed && pub.track) {
+              attachRemoteTrack(pub.track, participant);
+            } else if (typeof pub.setSubscribed === 'function') {
+              pub.setSubscribed(true);
+            }
+          });
         });
       }
     }
@@ -474,15 +686,10 @@ export default function ConsultationRoom() {
 
     return () => {
       isCancelled = true;
-      room.off(RoomEvent.TrackSubscribed, onTrackSubscribed);
-      room.off(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
-      room.off(RoomEvent.TrackPublished, onTrackPublished);
-      room.off(RoomEvent.ParticipantConnected, onParticipantConnected);
-      room.off(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
-      room.disconnect();
-      document.querySelectorAll('[id^="remote-audio-"]').forEach((el) => el.remove());
+      // Only clean up listeners on re-render, do NOT aggressively disconnect room mid-session
+      room.removeAllListeners();
     };
-  }, [showCallView, token, room]);
+  }, [token]); // ONLY trigger when token is obtained/updated
 
   // 8. Clinical Notes Debounced Autosave
   useEffect(() => {
@@ -647,7 +854,33 @@ export default function ConsultationRoom() {
     }
   };
 
-  const handleEndCall = async () => {
+  // Watch for appointment status becoming completed (concluded by doctor)
+  useEffect(() => {
+    if (appointment?.status === 'completed') {
+      toast.info("This consultation has already concluded.");
+      try {
+        if (localStreamRef.current) {
+          localStreamRef.current.getTracks().forEach((t) => t.stop());
+        }
+        for (const [, pub] of room.localParticipant.videoTrackPublications) {
+          if (pub.track) pub.track.stop();
+        }
+        for (const [, pub] of room.localParticipant.audioTrackPublications) {
+          if (pub.track) pub.track.stop();
+        }
+      } catch (_) { }
+      try {
+        room.disconnect();
+      } catch (_) { }
+      const timer = setTimeout(() => {
+        router.push(isDoctor ? '/doctor/dashboard' : '/patient/dashboard');
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [appointment?.status, isDoctor, router, room]);
+
+  // Patient Leave Call: Only disconnects room and stops local tracks. Does NOT end or complete the appointment in DB.
+  const handlePatientLeave = () => {
     try {
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
@@ -660,13 +893,98 @@ export default function ConsultationRoom() {
       }
     } catch (_) { }
     try {
-      await fetch('/api/appointments/call', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ appointment_id: roomId, action: 'end' })
-      });
+      room.disconnect();
     } catch (_) { }
-    router.push(isDoctor ? '/doctor/dashboard' : '/patient/dashboard');
+    toast.info("You left the consultation. You can rejoin anytime from your dashboard.");
+    router.push('/patient/dashboard');
+  };
+
+  // Doctor Leave Room (temporary): Doctor disconnects without concluding appointment
+  const handleDoctorLeave = () => {
+    setShowDoctorEndModal(false);
+    try {
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((t) => t.stop());
+      }
+      for (const [, pub] of room.localParticipant.videoTrackPublications) {
+        if (pub.track) pub.track.stop();
+      }
+      for (const [, pub] of room.localParticipant.audioTrackPublications) {
+        if (pub.track) pub.track.stop();
+      }
+    } catch (_) { }
+    try {
+      room.disconnect();
+    } catch (_) { }
+    toast.info("You left the consultation room. You can rejoin anytime from your dashboard.");
+    router.push('/doctor/dashboard');
+  };
+
+  // Doctor End Consultation for All (Doctor Only): Broadcasts MEETING_ENDED, marks appointment completed in Supabase, disconnects room
+  const handleDoctorEndForAll = async () => {
+    setIsEndingCall(true);
+    try {
+      // 1. Broadcast MEETING_ENDED to participants via LiveKit data channel
+      if (room && room.state === 'connected' && room.localParticipant) {
+        try {
+          const encoder = new TextEncoder();
+          const data = encoder.encode(JSON.stringify({ type: 'MEETING_ENDED' }));
+          await room.localParticipant.publishData(data, { reliable: true });
+        } catch (pubErr) {
+          console.warn("Could not broadcast MEETING_ENDED over LiveKit:", pubErr);
+        }
+      }
+
+      // 2. Stop local tracks
+      try {
+        if (localStreamRef.current) {
+          localStreamRef.current.getTracks().forEach((t) => t.stop());
+        }
+        for (const [, pub] of room.localParticipant.videoTrackPublications) {
+          if (pub.track) pub.track.stop();
+        }
+        for (const [, pub] of room.localParticipant.audioTrackPublications) {
+          if (pub.track) pub.track.stop();
+        }
+      } catch (_) { }
+
+      // 3. Mark appointment as completed directly in Supabase and via API
+      try {
+        await supabase
+          .from('appointments')
+          .update({ status: 'completed' })
+          .eq('id', roomId);
+
+        await fetch('/api/appointments/call', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ appointment_id: roomId, action: 'end' })
+        });
+      } catch (apiErr) {
+        console.warn("Error updating completed status:", apiErr);
+      }
+
+      // 4. Disconnect room
+      try {
+        room.disconnect();
+      } catch (_) { }
+
+      toast.success("Consultation concluded and marked completed.");
+      router.push('/doctor/dashboard');
+    } catch (err: any) {
+      console.error("Failed to end consultation for all:", err);
+      toast.error("Failed to end consultation. Please try again.");
+      setIsEndingCall(false);
+    }
+  };
+
+  // Main End/Leave click handler
+  const handleEndCall = () => {
+    if (isDoctor) {
+      setShowDoctorEndModal(true);
+    } else {
+      handlePatientLeave();
+    }
   };
 
   // State Triggers
@@ -773,23 +1091,42 @@ export default function ConsultationRoom() {
     }
   };
 
-  if (loading && !(isDoctor && appointment)) {
+  if ((loadingUser || loadingAppt) && !(isDoctor && appointment)) {
     return (
       <div className="min-h-screen bg-[#070b14] text-white flex flex-col items-center justify-center font-sans gap-3">
         <Loader2 className="w-8 h-8 animate-spin text-emerald-400" />
-        <p className="text-xs text-slate-400">Syncing waiting room and consultation data...</p>
+        <p className="text-xs text-slate-400">Connecting to consultation room...</p>
       </div>
     );
   }
 
   if (!appointment) {
     return (
-      <div className="min-h-screen bg-[#070b14] text-white flex flex-col items-center justify-center font-sans gap-3">
+      <div className="min-h-screen bg-[#070b14] text-white flex flex-col items-center justify-center font-sans gap-3 p-6 text-center">
+        <div className="w-14 h-14 rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center mb-2">
+          <AlertCircle className="w-7 h-7 text-red-400" />
+        </div>
         <h2 className="text-lg font-bold text-red-400">Consultation Room Error</h2>
-        <p className="text-xs text-slate-400">We could not find this consultation appointment. Please check the URL.</p>
-        <Link href="/patient/dashboard" className="mt-4 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-xs rounded-xl transition">
-          Return to Dashboard
-        </Link>
+        <p className="text-xs text-slate-400 max-w-sm">
+          We could not find this consultation appointment. Please check the URL or try reconnecting.
+        </p>
+        <div className="flex items-center gap-3 mt-4">
+          <button
+            onClick={() => {
+              setLoadingAppt(true);
+              loadAppointment(0);
+            }}
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition cursor-pointer"
+          >
+            Retry Connection
+          </button>
+          <Link
+            href="/patient/dashboard"
+            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-xl transition"
+          >
+            Return to Dashboard
+          </Link>
+        </div>
       </div>
     );
   }
@@ -797,8 +1134,32 @@ export default function ConsultationRoom() {
   const apptStatus = appointment.status;
   const isPendingStatus = apptStatus === 'pending';
   const isDeclinedStatus = apptStatus === 'declined' || apptStatus === 'cancelled' || apptStatus === 'rejected';
+  const isCompletedStatus = apptStatus === 'completed';
   const backLink = isDoctor ? '/doctor/dashboard' : '/patient/dashboard';
   const backLabel = isDoctor ? 'Back to Doctor Dashboard' : 'Back to Patient Dashboard';
+
+  // Access Guard on Rejoin: If consultation already completed/concluded, block rejoining
+  if (isCompletedStatus) {
+    return (
+      <div className="min-h-screen bg-[#070b14] text-white flex flex-col items-center justify-center font-sans p-6 text-center">
+        <div className="max-w-md w-full bg-slate-900/60 border border-slate-800 rounded-3xl p-8 backdrop-blur-md shadow-2xl space-y-4">
+          <div className="w-14 h-14 rounded-full bg-emerald-500/10 border border-emerald-500/40 flex items-center justify-center mx-auto">
+            <Check className="w-7 h-7 text-emerald-400" />
+          </div>
+          <h2 className="text-xl font-bold text-white">Consultation Ended</h2>
+          <p className="text-xs text-slate-400">
+            This consultation has ended. Rejoin is not permitted.
+          </p>
+          <Link
+            href={backLink}
+            className="mt-6 inline-block w-full py-3 bg-slate-800 hover:bg-slate-700 text-xs font-bold rounded-xl transition border border-slate-700 text-white text-center cursor-pointer"
+          >
+            {backLabel}
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   if (isPendingStatus && !isDoctor) {
     return (
@@ -1006,35 +1367,38 @@ export default function ConsultationRoom() {
                 ref={remoteVideoRef}
                 autoPlay
                 playsInline
-                className="w-full h-full object-cover absolute inset-0 z-0"
+                className={`w-full h-full object-cover absolute inset-0 transition-opacity duration-300 ${hasRemoteVideo ? 'opacity-100 z-10' : 'opacity-0 z-0'
+                  }`}
               />
 
               {/* Remote Participant Name Tag Overlay */}
-              {hasRemoteVideo && (
-                <div className="absolute top-4 left-4 z-20 bg-slate-900/80 backdrop-blur-sm border border-slate-700/60 px-3 py-1 rounded-full text-xs font-medium text-slate-200 flex items-center gap-1.5 shadow-lg pointer-events-none">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                  <span>
-                    {isDoctor
-                      ? (appointment?.patient?.name || appointment?.patient_name || 'Patient')
-                      : (appointment?.doctor_name || appointment?.doctor?.name || 'Dr. Rahul Sharma')}
-                  </span>
-                </div>
-              )}
+              <div
+                className={`absolute top-4 left-4 z-20 bg-slate-900/80 backdrop-blur-sm border border-slate-700/60 px-3 py-1 rounded-full text-xs font-medium text-slate-200 flex items-center gap-1.5 shadow-lg pointer-events-none transition-opacity duration-300 ${hasRemoteVideo ? 'opacity-100' : 'opacity-0'
+                  }`}
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>
+                  {isDoctor
+                    ? (appointment?.patient?.name || appointment?.patient_name || 'Patient')
+                    : (appointment?.doctor_name || appointment?.doctor?.name || 'Dr. Rahul Sharma')}
+                </span>
+              </div>
 
-              {/* Waiting Spinner Fallback Overlay */}
-              {!hasRemoteVideo && (
-                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 text-slate-400 p-6 text-center bg-slate-950">
-                  <div className="w-14 h-14 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center shadow-inner">
-                    <Loader2 className="w-7 h-7 animate-spin text-emerald-400" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-semibold text-slate-200 mb-1">Waiting for participant video track...</h3>
-                    <p className="text-xs text-slate-500 max-w-xs">
-                      {isDoctor ? "The patient will appear here once connected to the session." : "Connecting to doctor's video feed..."}
-                    </p>
-                  </div>
+              {/* Waiting Spinner Fallback Overlay with CSS Opacity/Pointer-Events Transition */}
+              <div
+                className={`absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 text-slate-400 p-6 text-center bg-slate-950 transition-all duration-500 ease-in-out ${hasRemoteVideo ? 'opacity-0 pointer-events-none select-none' : 'opacity-100 pointer-events-auto'
+                  }`}
+              >
+                <div className="w-14 h-14 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center shadow-inner">
+                  <Loader2 className="w-7 h-7 animate-spin text-emerald-400" />
                 </div>
-              )}
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-200 mb-1">Waiting for participant video track...</h3>
+                  <p className="text-xs text-slate-500 max-w-xs">
+                    {isDoctor ? "The patient will appear here once connected to the session." : "Connecting to doctor's video feed..."}
+                  </p>
+                </div>
+              </div>
 
               {/* Draggable PiP Local Camera Preview Tile (Task 3: autoPlay, playsInline, muted) */}
               <div
@@ -1195,6 +1559,8 @@ export default function ConsultationRoom() {
                 <textarea
                   placeholder="Type clinical observations, physical examination notes, advice, or diagnosis here..."
                   value={clinicalNotes}
+                  onFocus={() => { if (typeof isTypingNotesRef !== 'undefined') isTypingNotesRef.current = true; }}
+                  onBlur={() => { if (typeof isTypingNotesRef !== 'undefined') isTypingNotesRef.current = false; }}
                   onChange={(e) => setClinicalNotes(e.target.value)}
                   rows={4}
                   className="w-full bg-slate-950/90 border border-slate-800 rounded-xl p-3 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-teal-500 resize-none transition"
@@ -1318,6 +1684,79 @@ export default function ConsultationRoom() {
           )}
         </div>
       </main>
+
+      {/* Google Meet-Style Leave vs End Consultation Modal for Doctor */}
+      {showDoctorEndModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="max-w-md w-full bg-[#0d1527] border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-5 animate-in zoom-in-95 duration-200">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-red-500/10 border border-red-500/30 flex items-center justify-center text-red-400">
+                  <PhoneOff className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Leave Consultation?</h3>
+                  <p className="text-xs text-slate-400">Choose how you want to exit this call.</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowDoctorEndModal(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 pt-2">
+              {/* Option 1: Leave Room (Can Rejoin) */}
+              <button
+                onClick={handleDoctorLeave}
+                className="w-full p-4 rounded-2xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-left transition flex items-start gap-3.5 group cursor-pointer"
+              >
+                <div className="w-8 h-8 rounded-xl bg-slate-700/60 flex items-center justify-center text-slate-300 shrink-0 mt-0.5 group-hover:bg-slate-700">
+                  <LogOut className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-white group-hover:text-emerald-400 transition">
+                    Just Leave Room
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-0.5">
+                    Disconnect yourself without ending the session. You can rejoin at any time from your dashboard.
+                  </div>
+                </div>
+              </button>
+
+              {/* Option 2: End Consultation for All (Conclude & Complete) */}
+              <button
+                onClick={handleDoctorEndForAll}
+                disabled={isEndingCall}
+                className="w-full p-4 rounded-2xl bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-left transition flex items-start gap-3.5 group cursor-pointer disabled:opacity-50"
+              >
+                <div className="w-8 h-8 rounded-xl bg-red-500/20 flex items-center justify-center text-red-400 shrink-0 mt-0.5 group-hover:bg-red-500/30">
+                  {isEndingCall ? <Loader2 className="w-4 h-4 animate-spin" /> : <PhoneOff className="w-4 h-4" />}
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-red-400 group-hover:text-red-300 transition">
+                    {isEndingCall ? "Ending Consultation..." : "End Consultation for All"}
+                  </div>
+                  <div className="text-[11px] text-red-300/70 mt-0.5">
+                    Conclude the consultation session for all participants and mark the appointment completed.
+                  </div>
+                </div>
+              </button>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                onClick={() => setShowDoctorEndModal(false)}
+                className="px-4 py-2 text-xs font-medium text-slate-400 hover:text-white transition cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

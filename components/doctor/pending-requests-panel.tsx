@@ -489,7 +489,7 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
                         onClick={() => handleStartConsultation(req.id)}
                         className="px-5 py-2.5 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.3)] flex items-center justify-center gap-2 transition cursor-pointer"
                       >
-                        <Video className="w-4 h-4" /> Start Consultation
+                        <Video className="w-4 h-4" /> {req.status === 'in_progress' || req.is_doctor_in_room || req.reason?.includes('[DOCTOR_IN_ROOM]') ? "Rejoin Consultation" : "Start Consultation"}
                       </Button>
                     )}
                     <Button

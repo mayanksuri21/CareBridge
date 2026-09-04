@@ -152,7 +152,9 @@ export async function GET(request: Request) {
       });
 
       let statusVal = appt.status;
-      if (isPatientAdmitted) {
+      if (appt.status === 'completed') {
+        statusVal = 'completed';
+      } else if (isPatientAdmitted) {
         statusVal = 'patient_admitted';
       } else if (isPatientWaiting) {
         statusVal = 'patient_waiting';
@@ -174,12 +176,12 @@ export async function GET(request: Request) {
         appointment_id: appt.id,
         roomId: appt.id,
         status: statusVal,
-        call_active: isCallActive || isDoctorInRoom || isPatientWaiting || isPatientAdmitted || statusVal === 'in_progress' || statusVal === 'doctor_in_room',
+        call_active: statusVal !== 'completed' && (isCallActive || isDoctorInRoom || isPatientWaiting || isPatientAdmitted || statusVal === 'in_progress' || statusVal === 'doctor_in_room'),
         reason: cleanReason,
         raw_reason: reasonStr,
-        is_doctor_in_room: isDoctorInRoom,
-        is_patient_waiting: isPatientWaiting,
-        is_patient_admitted: isPatientAdmitted,
+        is_doctor_in_room: statusVal !== 'completed' && isDoctorInRoom,
+        is_patient_waiting: statusVal !== 'completed' && isPatientWaiting,
+        is_patient_admitted: statusVal !== 'completed' && isPatientAdmitted,
         is_patient_declined: isPatientDeclined
       };
     };
