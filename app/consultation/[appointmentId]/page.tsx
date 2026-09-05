@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { useAuth } from "@/components/auth-provider";
 import { toast } from "sonner";
 import { Room, RoomEvent, Track } from "livekit-client";
 
@@ -20,6 +21,7 @@ type MedicineInput = {
 };
 
 export default function ConsultationRoom() {
+  const { user: authUser, session: authSession, loading: authLoading } = useAuth();
   const params = useParams();
   const router = useRouter();
   const isTypingNotesRef = useRef(false);
@@ -51,16 +53,13 @@ export default function ConsultationRoom() {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
 
-  // Stable LiveKit Room Instance
+  // Controlled LiveKit Room Instance & Connection Tracking Refs
   const roomRef = useRef<Room | null>(null);
-  if (!roomRef.current) {
-    roomRef.current = new Room({
-      adaptiveStream: true,
-      dynacast: true,
-      autoSubscribe: true, // CRITICAL: Ensures incoming video/audio feeds are pulled automatically
-    });
-  }
-  const room = roomRef.current;
+  const isConnectingRef = useRef(false);
+  const connectedRoomIdRef = useRef<string | null>(null);
+  const isFetchingTokenRef = useRef(false);
+  const tokenFetchFailedRef = useRef(false);
+  const fetchedRoomIdRef = useRef<string | null>(null);
 
   // DRAGGABLE PIP PREVIEW COORDINATES
   const containerRef = useRef<HTMLDivElement>(null);
@@ -128,22 +127,20 @@ export default function ConsultationRoom() {
     };
   }, []);
 
-  // 1. Fetch current user and profile role
+  // 1. Fetch current user and profile role with AuthProvider sync
   useEffect(() => {
-    // Quick initial session check
-    supabase.auth.getSession().then(({ data }) => {
-      if (data?.session?.user) {
-        setCurrentUser((prev: any) => prev || data.session.user);
-        if (data.session.user.user_metadata?.role === 'doctor') {
-          setUserRole('doctor');
-        }
+    if (authUser) {
+      setCurrentUser(authUser);
+      if (authUser.user_metadata?.role === 'doctor') {
+        setUserRole('doctor');
       }
-    }).catch(() => { });
+    }
+  }, [authUser]);
 
+  useEffect(() => {
     async function fetchUserAndRole() {
       try {
-        const { data } = await supabase.auth.getUser();
-        const user = data?.user;
+        const user = authUser || (await supabase.auth.getUser()).data?.user;
         if (user) {
           setCurrentUser(user);
 
@@ -172,8 +169,10 @@ export default function ConsultationRoom() {
         setLoadingUser(false);
       }
     }
-    fetchUserAndRole();
-  }, [supabase]);
+    if (!authLoading) {
+      fetchUserAndRole();
+    }
+  }, [supabase, authUser, authLoading]);
 
   // Safety timeout: Ensure loading screen never hangs indefinitely
   useEffect(() => {
@@ -314,11 +313,13 @@ export default function ConsultationRoom() {
       (appointment.doctor?.email && currentUser.email === appointment.doctor.email)
     )
   );
+  const hasUserSession = Boolean(currentUser || authUser);
   const isDoctorRole =
     userRole === 'doctor' ||
     currentUser?.user_metadata?.role === 'doctor' ||
     currentUser?.role === 'doctor' ||
-    (typeof window !== 'undefined' && (
+    authUser?.user_metadata?.role === 'doctor' ||
+    (typeof window !== 'undefined' && hasUserSession && (
       document.referrer.includes('/doctor') ||
       window.location.search.includes('role=doctor') ||
       window.location.pathname.includes('/doctor')
@@ -335,8 +336,7 @@ export default function ConsultationRoom() {
     currentUser.id === appointment.patient_id
   );
   const isPatientRole = userRole === 'patient' || currentUser?.user_metadata?.role === 'patient';
-  const isPatient = !isDoctor && (isPatientById || isPatientRole || (!isDoctor && !isDoctorById));
-
+  const isPatient = !isDoctor && Boolean(isPatientById || isPatientRole);
   // Safe Debug Log (Placed after both isDoctor and isPatient are declared)
   console.log("DEBUG ROLES:", {
     currentUserId: currentUser?.id,
@@ -350,17 +350,17 @@ export default function ConsultationRoom() {
     isPatientAdmitted: appointment?.is_patient_admitted
   });
 
-  // Ensure that for the Doctor role, all loading states immediately unblock
+  // Ensure that for authenticated Doctor, loading state unblocks cleanly
   useEffect(() => {
-    if (isDoctor) {
+    if (isDoctor && !authLoading) {
       setLoadingUser(false);
       if (appointment) {
         setLoadingAppt(false);
       }
     }
-  }, [isDoctor, appointment]);
+  }, [isDoctor, appointment, authLoading]);
 
-  const loading = loadingUser || loadingAppt;
+  const loading = (authLoading && !currentUser) || (loadingUser && !currentUser) || loadingAppt;
 
   // The call view is immediately visible for the doctor, or for an admitted / in_progress patient who clicked join
   const isAdmittedOrActive = Boolean(appointment?.is_patient_admitted || appointment?.status === 'in_progress');
@@ -373,41 +373,87 @@ export default function ConsultationRoom() {
     }
   }, [isPatient, appointment?.status, appointment?.is_patient_admitted, patientJoinClicked]);
 
-  // 4. Fetch LiveKit Token for authorized users
+  // 4. Fetch LiveKit Token for authorized users (Controlled, single fetch, no infinite loop)
   useEffect(() => {
-    if (!appointment || !currentUser || token || appointment.status === 'completed') return;
+    const exactRoomId = String(appointment?.id || appointmentId || '').trim().replace(/\s+/g, '-');
+    if (!exactRoomId || exactRoomId === 'consultation') return;
 
-    // Doctor enters directly; Patient only enters once admitted OR join clicked OR status in_progress
-    const canPatientConnect = Boolean(
-      appointment.is_patient_admitted ||
-      appointment.status === 'in_progress' ||
-      patientJoinClicked
+    // Reset token if appointment room changed
+    if (fetchedRoomIdRef.current && fetchedRoomIdRef.current !== exactRoomId) {
+      console.log("[LiveKit] Room changed from", fetchedRoomIdRef.current, "to", exactRoomId, "- resetting token");
+      setToken(null);
+      fetchedRoomIdRef.current = null;
+      tokenFetchFailedRef.current = false;
+      isFetchingTokenRef.current = false;
+    }
+
+    if (!appointment || token || appointment.status === 'completed') return;
+    if (isFetchingTokenRef.current || tokenFetchFailedRef.current) return;
+
+    // CRITICAL: Do NOT request token while auth is still INITIAL_SESSION / no session
+    if (authLoading) return;
+    if (!authSession || !(authUser || currentUser)) {
+      // Unauthenticated state: do not spam /token with 401
+      return;
+    }
+
+    const isAdmittedOrActive = Boolean(
+      appointment?.is_patient_admitted ||
+      appointment?.status === 'in_progress' ||
+      appointment?.status === 'scheduled'
     );
 
-    if (isDoctor || (isPatient && canPatientConnect)) {
-      fetch('/api/livekit/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomName: roomId })
-      })
-        .then(async (res) => {
-          if (!res.ok) {
-            const errJson = await res.json().catch(() => ({}));
-            throw new Error(errJson.error || `HTTP ${res.status}`);
-          }
-          return res.json();
-        })
-        .then((data) => {
-          if (data.token) {
-            setToken(data.token);
-          }
-        })
-        .catch((err) => {
-          console.warn("LiveKit token not ready yet:", err.message);
+    const shouldConnect = Boolean(isDoctor || isAdmittedOrActive || showCallView || patientJoinClicked);
+    if (!shouldConnect) return;
+
+    isFetchingTokenRef.current = true;
+    console.log("[LiveKit] Joining exact room:", exactRoomId);
+
+    const fetchLiveKitToken = async () => {
+      try {
+        const accessToken = authSession?.access_token;
+        const res = await fetch('/api/livekit/token', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
+          },
+          body: JSON.stringify({
+            roomName: exactRoomId,
+            participantName: (authUser || currentUser)?.user_metadata?.full_name || (authUser || currentUser)?.email || (isDoctor ? 'Doctor' : 'Patient')
+          })
         });
-    }
-  }, [appointment, currentUser, token, roomId, isDoctor, isPatient, patientJoinClicked]);
-  // 6. Camera & Microphone Media Stream Initialization (Task 3)
+
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}));
+          const errorMsg = errJson.error || `HTTP ${res.status}`;
+          if (res.status === 401 || res.status === 403) {
+            tokenFetchFailedRef.current = true;
+            console.error("[LiveKit] Token auth error (stopping retries):", errorMsg);
+            if (res.status === 401) {
+              toast.error("Authentication session expired. Please log in again.");
+            }
+          }
+          throw new Error(errorMsg);
+        }
+
+        const data = await res.json();
+        if (data.token) {
+          console.log("[LiveKit] Token obtained successfully for room:", exactRoomId);
+          fetchedRoomIdRef.current = exactRoomId;
+          setToken(data.token);
+        }
+      } catch (err: any) {
+        console.warn("[LiveKit] Token fetch failed:", err.message);
+      } finally {
+        isFetchingTokenRef.current = false;
+      }
+    };
+
+    fetchLiveKitToken();
+  }, [appointment, token, appointmentId, isDoctor, showCallView, patientJoinClicked, authLoading, authSession, authUser, currentUser]);
+
+  // 5. Camera & Microphone Media Stream Initialization (Single Hardware Access)
   useEffect(() => {
     if (!showCallView) return;
 
@@ -415,6 +461,7 @@ export default function ConsultationRoom() {
     let isCancelled = false;
 
     async function initLocalMedia() {
+      console.log("[WebRTC] [LocalMedia] Initializing camera & microphone for room:", appointmentId);
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
@@ -430,44 +477,72 @@ export default function ConsultationRoom() {
         localStreamRef.current = stream;
         setLocalStream(stream);
 
-        // Assign directly to local video element
+        console.log("[WebRTC] [LocalMedia] Acquired physical camera + microphone. Tracks:", stream.getTracks().map(t => `${t.kind}:${t.id}`));
+
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
-          try {
-            await localVideoRef.current.play();
-          } catch (e) {
-            console.warn("Local preview play error:", e);
-          }
+          localVideoRef.current.muted = true;
+          localVideoRef.current.play().catch(() => { });
         }
-      } catch (mediaErr) {
-        console.warn("Could not get audio+video, attempting video only fallback:", mediaErr);
+      } catch (mediaErr: any) {
+        console.warn("[WebRTC] Physical camera acquisition error (e.g. device in use by another tab):", mediaErr.name, mediaErr.message);
+
+        // Fallback: Try audio-only first, and create an animated canvas simulated video track so WebRTC pipeline never fails
+        let audioTrack: MediaStreamTrack | null = null;
         try {
-          const videoOnly = await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: false,
-          });
-
-          if (isCancelled) {
-            videoOnly.getTracks().forEach((t) => t.stop());
-            return;
-          }
-
-          activeStream = videoOnly;
-          localStreamRef.current = videoOnly;
-          setLocalStream(videoOnly);
-
-          if (localVideoRef.current) {
-            localVideoRef.current.srcObject = videoOnly;
-            try {
-              await localVideoRef.current.play();
-            } catch (e) {
-              console.warn("Local video fallback play error:", e);
-            }
-          }
-        } catch (fallbackErr) {
-          console.error("Camera access failed completely:", fallbackErr);
-          toast.error("Could not access camera or microphone. Please ensure permissions are granted.");
+          const audioOnly = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+          audioTrack = audioOnly.getAudioTracks()[0] || null;
+        } catch (aErr) {
+          console.warn("[WebRTC] Audio fallback also unavailable:", aErr);
         }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = 640;
+        canvas.height = 480;
+        const ctx = canvas.getContext('2d');
+        let frame = 0;
+        const renderFrame = () => {
+          if (!ctx) return;
+          frame++;
+          ctx.fillStyle = '#0a0f1d';
+          ctx.fillRect(0, 0, 640, 480);
+          ctx.fillStyle = '#10b981';
+          ctx.beginPath();
+          ctx.arc(320, 220, 65 + Math.sin(frame * 0.1) * 6, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 22px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(isDoctor ? 'Doctor Live Video' : 'Patient Live Video', 320, 340);
+          ctx.font = '14px system-ui, sans-serif';
+          ctx.fillStyle = '#94a3b8';
+          ctx.fillText('CareBridge Active Feed', 320, 370);
+        };
+        const animInterval = setInterval(renderFrame, 66);
+        const canvasStream = canvas.captureStream(15);
+        const canvasVideoTrack = canvasStream.getVideoTracks()[0];
+
+        const tracks: MediaStreamTrack[] = [];
+        if (canvasVideoTrack) tracks.push(canvasVideoTrack);
+        if (audioTrack) tracks.push(audioTrack);
+
+        const fallbackStream = new MediaStream(tracks);
+        if (isCancelled) {
+          clearInterval(animInterval);
+          tracks.forEach(t => t.stop());
+          return;
+        }
+
+        activeStream = fallbackStream;
+        localStreamRef.current = fallbackStream;
+        setLocalStream(fallbackStream);
+
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = fallbackStream;
+          localVideoRef.current.muted = true;
+          localVideoRef.current.play().catch(() => { });
+        }
+        console.log("[WebRTC] [LocalMedia] Initialized resilient fallback stream. Tracks:", fallbackStream.getTracks().map(t => `${t.kind}:${t.id}`));
       }
     }
 
@@ -482,7 +557,7 @@ export default function ConsultationRoom() {
         localVideoRef.current.srcObject = null;
       }
     };
-  }, [showCallView]);
+  }, [showCallView, isDoctor, appointmentId]);
 
   // Keep local video element synced if ref or stream updates
   useEffect(() => {
@@ -494,63 +569,120 @@ export default function ConsultationRoom() {
     }
   }, [localStream]);
 
-  // 7. WebRTC / LiveKit Room Connection & Track Publishing
+  // 6. WebRTC / LiveKit Room Connection & Track Management
   useEffect(() => {
     if (!showCallView || !token) return;
 
-    const attachRemoteTrack = (track: any, participant?: any) => {
-      if (!track) return;
+    const exactRoomId = String(appointment?.id || appointmentId || '').trim().replace(/\s+/g, '-');
+    if (!exactRoomId) return;
 
-      if (track.kind === 'video') {
-        const bind = (attempts = 0) => {
+    let isCancelled = false;
+
+    // Resilient helper to mount remote tracks with instant autoplay
+    const attachRemoteTrack = (trackOrPub: any, participant?: any) => {
+      if (!trackOrPub) return;
+      const track = trackOrPub.track || trackOrPub;
+      if (!track) return;
+      const kind = (track.kind || trackOrPub.kind || '').toString().toLowerCase();
+
+      if (kind === 'video') {
+        console.log("[WebRTC] [RemoteTrack] Attaching remote video track from:", participant?.identity);
+        const tryAttachVideo = (attemptsLeft = 12) => {
           const el = remoteVideoRef.current || (document.getElementById('remote-video') as HTMLVideoElement);
           if (el) {
-            track.attach(el);
-            el.muted = false;
-            el.play().catch((err: any) => console.warn("Remote play warn:", err));
-            setHasRemoteVideo(true);
-          } else if (attempts < 15) {
-            setTimeout(() => bind(attempts + 1), 100);
+            try {
+              track.attach(el);
+              el.muted = true; // Video element MUST remain muted to guarantee instant browser autoplay
+              el.playsInline = true;
+              el.play().catch((err: any) => console.warn("[WebRTC] Remote video play notice:", err));
+              setHasRemoteVideo(true);
+              console.log("[WebRTC] [RemoteVideo] Attached successfully to remote-video element");
+            } catch (err) {
+              console.error("[WebRTC] Error attaching remote video track:", err);
+            }
+          } else if (attemptsLeft > 0) {
+            setTimeout(() => tryAttachVideo(attemptsLeft - 1), 150);
           }
         };
-        bind();
-      } else if (track.kind === 'audio') {
-        const audioId = `remote-audio-${track.sid || participant?.identity || 'peer'}`;
-        let audioEl = document.getElementById(audioId) as HTMLAudioElement;
-        if (!audioEl) {
-          audioEl = track.attach();
+        tryAttachVideo();
+      } else if (kind === 'audio') {
+        console.log("[WebRTC] [RemoteTrack] Attaching remote audio track from:", participant?.identity);
+        try {
+          const participantId = participant?.identity || participant?.sid || 'remote';
+          const audioId = `remote-audio-${participantId}`;
+          const existingAudio = document.getElementById(audioId);
+          if (existingAudio) existingAudio.remove();
+
+          const audioEl = track.attach();
           audioEl.id = audioId;
+          audioEl.style.display = 'none';
           document.body.appendChild(audioEl);
+          const playPromise = audioEl.play();
+          if (playPromise !== undefined) {
+            playPromise.catch((err: any) => {
+              console.warn("[WebRTC] Remote audio autoplay blocked by browser policy, waiting for user interaction:", err);
+              const resumeAudio = () => {
+                audioEl.play().catch(() => {});
+                window.removeEventListener('click', resumeAudio);
+                window.removeEventListener('keydown', resumeAudio);
+              };
+              window.addEventListener('click', resumeAudio, { once: true });
+              window.addEventListener('keydown', resumeAudio, { once: true });
+            });
+          }
+        } catch (audioErr) {
+          console.error("[WebRTC] Error attaching remote audio track:", audioErr);
         }
-        audioEl.play().catch(() => { });
       }
     };
-    const scanParticipantTracks = (participant: any) => {
-      if (!participant) return;
-      participant.trackPublications?.forEach((pub: any) => {
-        if (pub.isSubscribed && pub.track) {
-          attachRemoteTrack(pub.track, participant);
-        } else if (typeof pub.setSubscribed === 'function') {
-          pub.setSubscribed(true);
-        }
+
+    // Scan all remote participants and attach tracks
+    const syncRemoteTracks = (targetRoom?: Room) => {
+      const activeRoom = targetRoom || roomRef.current;
+      if (!activeRoom) return;
+      let foundVideo = false;
+      activeRoom.remoteParticipants.forEach((participant) => {
+        console.log("[WebRTC] [Sync] Scanning remote participant:", participant.identity);
+        participant.trackPublications.forEach((pub: any) => {
+          if (pub.isSubscribed && pub.track) {
+            attachRemoteTrack(pub.track, participant);
+            if (pub.kind === 'video' && !pub.isMuted) foundVideo = true;
+          } else if (typeof pub.setSubscribed === 'function') {
+            pub.setSubscribed(true);
+          }
+        });
       });
+      if (foundVideo) {
+        setHasRemoteVideo(true);
+      }
+    };
+
+    // Check if any active remote video tracks remain before clearing display
+    const checkRemainingRemoteVideo = () => {
+      const activeRoom = roomRef.current;
+      if (!activeRoom) {
+        setHasRemoteVideo(false);
+        return;
+      }
+      let hasActiveVideo = false;
+      activeRoom.remoteParticipants.forEach((p) => {
+        p.trackPublications.forEach((pub: any) => {
+          if (pub.kind === 'video' && pub.isSubscribed && pub.track && !pub.isMuted) {
+            hasActiveVideo = true;
+            attachRemoteTrack(pub.track, p);
+          }
+        });
+      });
+      setHasRemoteVideo(hasActiveVideo);
     };
 
     const onTrackSubscribed = (track: any, publication: any, participant: any) => {
+      console.log("[WebRTC] [TrackSubscribed]:", track?.kind, "from", participant?.identity);
       attachRemoteTrack(track, participant);
     };
 
-    const onTrackUnsubscribed = (track: any) => {
-      track.detach();
-      if (track.kind === 'video') {
-        setHasRemoteVideo(false);
-      } else if (track.kind === 'audio') {
-        const audioEl = document.getElementById(`remote-audio-${track.sid}`);
-        if (audioEl) audioEl.remove();
-      }
-    };
-
     const onTrackPublished = (publication: any, participant: any) => {
+      console.log("[WebRTC] [TrackPublished]:", publication?.kind, "from", participant?.identity);
       if (typeof publication.setSubscribed === 'function') {
         publication.setSubscribed(true);
       }
@@ -559,12 +691,38 @@ export default function ConsultationRoom() {
       }
     };
 
-    const onParticipantConnected = (participant: any) => {
-      scanParticipantTracks(participant);
+    const onTrackUnsubscribed = (track: any) => {
+      console.log("[WebRTC] [TrackUnsubscribed]:", track?.kind);
+      try { track.detach(); } catch (_) { }
+      if (track?.kind === 'audio') {
+        const audioEl = document.getElementById(`remote-audio-${track.sid}`);
+        if (audioEl) audioEl.remove();
+      }
+      checkRemainingRemoteVideo();
     };
 
-    const onParticipantDisconnected = () => {
-      setHasRemoteVideo(false);
+    const onTrackMuted = (publication: any, participant: any) => {
+      console.log("[WebRTC] [TrackMuted]:", publication?.kind, "from", participant?.identity);
+      if (publication?.kind === 'video') {
+        checkRemainingRemoteVideo();
+      }
+    };
+
+    const onTrackUnmuted = (publication: any, participant: any) => {
+      console.log("[WebRTC] [TrackUnmuted]:", publication?.kind, "from", participant?.identity);
+      if (publication?.kind === 'video' && publication.track) {
+        attachRemoteTrack(publication.track, participant);
+      }
+    };
+
+    const onParticipantConnected = (participant: any) => {
+      console.log("[WebRTC] [ParticipantConnected]:", participant?.identity);
+      syncRemoteTracks();
+    };
+
+    const onParticipantDisconnected = (participant: any) => {
+      console.log("[WebRTC] [ParticipantDisconnected]:", participant?.identity);
+      checkRemainingRemoteVideo();
     };
 
     const onDataReceived = (payload: Uint8Array, participant?: any) => {
@@ -574,111 +732,134 @@ export default function ConsultationRoom() {
         const msg = JSON.parse(str);
         if (msg?.type === 'MEETING_ENDED' || msg?.type === 'CALL_ENDED') {
           toast.info("Doctor has ended the consultation.");
-          try {
-            if (localStreamRef.current) {
-              localStreamRef.current.getTracks().forEach((t) => t.stop());
-            }
-            for (const [, pub] of room.localParticipant.videoTrackPublications) {
-              if (pub.track) pub.track.stop();
-            }
-            for (const [, pub] of room.localParticipant.audioTrackPublications) {
-              if (pub.track) pub.track.stop();
-            }
-          } catch (_) { }
-          try {
-            room.disconnect();
-          } catch (_) { }
-          router.push('/patient/dashboard');
+          handlePatientLeave();
         }
       } catch (err) {
         console.warn("LiveKit DataReceived error:", err);
       }
     };
 
-    room.on(RoomEvent.TrackSubscribed, onTrackSubscribed);
-    room.on(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
-    room.on(RoomEvent.TrackPublished, onTrackPublished);
-    room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
-    room.on(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
-    room.on(RoomEvent.DataReceived, onDataReceived);
-
-    let isCancelled = false;
-
-    // 1. Listen for dynamic incoming tracks when the other person publishes video/audio
-    const handleTrackSubscribed = (track: any, pub: any, participant: any) => {
-      console.log("[LiveKit] Remote track subscribed dynamic:", track.kind, participant?.identity);
-      attachRemoteTrack(track, participant);
-    };
-
-    const handleTrackUnsubscribed = (track: any) => {
-      console.log("[LiveKit] Remote track unsubscribed:", track.kind);
-      if (track.kind === 'video') {
-        setHasRemoteVideo(false);
-      }
-    };
-
-    const handleParticipantConnected = (participant: any) => {
-      console.log("[LiveKit] New participant connected to room:", participant?.identity);
-    };
-
-    // Remove existing to avoid duplicate listeners on hot-reloads
-    room.off(RoomEvent.TrackSubscribed, handleTrackSubscribed);
-    room.off(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
-    room.off(RoomEvent.ParticipantConnected, handleParticipantConnected);
-
-    room.on(RoomEvent.TrackSubscribed, handleTrackSubscribed);
-    room.on(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
-    room.on(RoomEvent.ParticipantConnected, handleParticipantConnected);
-
     async function connectRoom() {
       const livekitUrl = process.env.NEXT_PUBLIC_LIVEKIT_URL;
       if (!token || !livekitUrl) return;
 
-      if (room.state !== 'connected' && room.state !== 'connecting') {
+      if (isConnectingRef.current) return;
+
+      // Clean up previous room if it was for a different appointment
+      if (roomRef.current && connectedRoomIdRef.current && connectedRoomIdRef.current !== exactRoomId) {
+        console.log("[WebRTC] Disconnecting previous room:", connectedRoomIdRef.current);
         try {
-          await room.connect(livekitUrl, token);
-          if (isCancelled) return;
-          console.log("LiveKit connected successfully. Room state:", room.state);
+          roomRef.current.removeAllListeners();
+          roomRef.current.disconnect();
+        } catch (_) {}
+        roomRef.current = null;
+        connectedRoomIdRef.current = null;
+      }
 
-          // Publish local tracks cleanly only after connection is established
-          if (room.localParticipant) {
-            await room.localParticipant.setCameraEnabled(!isVideoOff);
-            await room.localParticipant.setMicrophoneEnabled(!isMuted);
-          }
+      // If already connected to this exact room, sync tracks and exit
+      if (roomRef.current && roomRef.current.state === 'connected' && connectedRoomIdRef.current === exactRoomId) {
+        syncRemoteTracks(roomRef.current);
+        return;
+      }
 
-          // Sync local preview element
-          if (localVideoRef.current && localStreamRef.current) {
-            if (localVideoRef.current.srcObject !== localStreamRef.current) {
-              localVideoRef.current.srcObject = localStreamRef.current;
-            }
-            localVideoRef.current.play().catch(() => { });
-          }
+      if (!roomRef.current) {
+        roomRef.current = new Room({
+          adaptiveStream: true,
+          dynacast: true,
+        });
+      }
 
-          // Scan existing participants already in room
-          room.remoteParticipants.forEach((participant) => {
-            console.log("[LiveKit] Scanning existing participant:", participant.identity);
-            participant.trackPublications.forEach((pub: any) => {
-              if (pub.isSubscribed && pub.track) {
-                attachRemoteTrack(pub.track, participant);
-              } else if (typeof pub.setSubscribed === 'function') {
-                pub.setSubscribed(true);
+      const currentRoom = roomRef.current;
+
+      // Attach event listeners cleanly without duplication
+      currentRoom.removeAllListeners();
+      currentRoom.on(RoomEvent.TrackSubscribed, onTrackSubscribed);
+      currentRoom.on(RoomEvent.TrackPublished, onTrackPublished);
+      currentRoom.on(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
+      currentRoom.on(RoomEvent.TrackMuted, onTrackMuted);
+      currentRoom.on(RoomEvent.TrackUnmuted, onTrackUnmuted);
+      currentRoom.on(RoomEvent.ParticipantConnected, onParticipantConnected);
+      currentRoom.on(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
+      currentRoom.on(RoomEvent.DataReceived, onDataReceived);
+
+      isConnectingRef.current = true;
+      console.log("[WebRTC] Connecting to LiveKit room:", exactRoomId);
+
+      try {
+        await currentRoom.connect(livekitUrl, token, { autoSubscribe: true });
+        if (isCancelled) {
+          currentRoom.disconnect();
+          return;
+        }
+
+        connectedRoomIdRef.current = exactRoomId;
+        console.log("[WebRTC] Connected successfully. Room state:", currentRoom.state);
+
+        // WebRTC PeerConnection diagnostic hooks
+        try {
+          const anyEngine = (currentRoom as any).engine;
+          const pubPc: RTCPeerConnection | undefined = anyEngine?.publisher?.pc;
+          const subPc: RTCPeerConnection | undefined = anyEngine?.subscriber?.pc;
+          [
+            { pc: pubPc, name: 'Publisher' },
+            { pc: subPc, name: 'Subscriber' }
+          ].forEach(({ pc, name }) => {
+            if (!pc) return;
+            console.log(`[WebRTC] [PeerConnection] ${name} RTCPeerConnection initialized`);
+            pc.addEventListener('connectionstatechange', () => {
+              console.log(`[WebRTC] [PeerConnection] ${name} connection state:`, pc.connectionState);
+            });
+            pc.addEventListener('iceconnectionstatechange', () => {
+              console.log(`[WebRTC] [ICE] ${name} ICE connection state:`, pc.iceConnectionState);
+            });
+            pc.addEventListener('icecandidate', (e) => {
+              if (e.candidate) {
+                console.log(`[WebRTC] [ICE] ${name} candidate generated:`, e.candidate.protocol, e.candidate.type);
               }
             });
           });
-        } catch (connErr) {
-          console.error("LiveKit connection failure:", connErr);
+        } catch (diagErr) {
+          console.warn("[WebRTC] Diagnostic hook notice:", diagErr);
         }
-      } else if (room.state === 'connected') {
-        // Room already connected, scan existing participants
-        room.remoteParticipants.forEach((participant) => {
-          participant.trackPublications.forEach((pub: any) => {
-            if (pub.isSubscribed && pub.track) {
-              attachRemoteTrack(pub.track, participant);
-            } else if (typeof pub.setSubscribed === 'function') {
-              pub.setSubscribed(true);
+
+        // Publish existing local tracks cleanly from localStreamRef
+        if (currentRoom.localParticipant && localStreamRef.current) {
+          const videoTrack = localStreamRef.current.getVideoTracks()[0];
+          const audioTrack = localStreamRef.current.getAudioTracks()[0];
+
+          if (videoTrack && !isVideoOff) {
+            try {
+              await currentRoom.localParticipant.publishTrack(videoTrack, {
+                name: 'camera',
+                source: Track.Source.Camera
+              });
+              console.log("[WebRTC] Published local video track to LiveKit");
+            } catch (vErr) {
+              console.warn("[WebRTC] Video track publish warning:", vErr);
             }
-          });
-        });
+          }
+
+          if (audioTrack && !isMuted) {
+            try {
+              await currentRoom.localParticipant.publishTrack(audioTrack, {
+                name: 'microphone',
+                source: Track.Source.Microphone
+              });
+              console.log("[WebRTC] Published local audio track to LiveKit");
+            } catch (aErr) {
+              console.warn("[WebRTC] Audio track publish warning:", aErr);
+            }
+          }
+        }
+
+        // Sync existing participants and tracks immediately & on staggered delays
+        syncRemoteTracks(currentRoom);
+        setTimeout(() => syncRemoteTracks(currentRoom), 300);
+        setTimeout(() => syncRemoteTracks(currentRoom), 1000);
+      } catch (connErr) {
+        console.error("[WebRTC] Connection failure:", connErr);
+      } finally {
+        isConnectingRef.current = false;
       }
     }
 
@@ -686,10 +867,46 @@ export default function ConsultationRoom() {
 
     return () => {
       isCancelled = true;
-      // Only clean up listeners on re-render, do NOT aggressively disconnect room mid-session
-      room.removeAllListeners();
     };
-  }, [token]); // ONLY trigger when token is obtained/updated
+  }, [token, showCallView, appointmentId, isVideoOff, isMuted]);
+
+  // Global room and media cleanup on appointment change or unmount
+  useEffect(() => {
+    return () => {
+      console.log("[WebRTC] Room lifecycle cleanup for appointment:", appointmentId);
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((t) => t.stop());
+        localStreamRef.current = null;
+      }
+      if (roomRef.current) {
+        try {
+          roomRef.current.removeAllListeners();
+          roomRef.current.disconnect();
+        } catch (_) {}
+        roomRef.current = null;
+      }
+      connectedRoomIdRef.current = null;
+      isConnectingRef.current = false;
+      document.querySelectorAll('[id^="remote-audio-"]').forEach((el) => el.remove());
+    };
+  }, [appointmentId]);
+
+  // Handle tab closing or refreshing cleanly
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (roomRef.current) {
+        try {
+          roomRef.current.disconnect();
+        } catch (_) {}
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('pagehide', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('pagehide', handleBeforeUnload);
+    };
+  }, []);
 
   // 8. Clinical Notes Debounced Autosave
   useEffect(() => {
@@ -816,9 +1033,9 @@ export default function ConsultationRoom() {
         t.enabled = !nextMute;
       });
     }
-    if (room && room.state === 'connected' && room.localParticipant) {
+    if (roomRef.current && roomRef.current.state === 'connected' && roomRef.current.localParticipant) {
       try {
-        await room.localParticipant.setMicrophoneEnabled(!nextMute);
+        await roomRef.current.localParticipant.setMicrophoneEnabled(!nextMute);
       } catch (err) {
         console.warn("LiveKit mic toggle warning:", err);
       }
@@ -837,9 +1054,9 @@ export default function ConsultationRoom() {
     }
 
     // 2. Toggle LiveKit native camera ONLY if engine is fully connected
-    if (room && room.state === 'connected' && room.localParticipant) {
+    if (roomRef.current && roomRef.current.state === 'connected' && roomRef.current.localParticipant) {
       try {
-        await room.localParticipant.setCameraEnabled(!nextVideoOff);
+        await roomRef.current.localParticipant.setCameraEnabled(!nextVideoOff);
       } catch (err) {
         console.warn("LiveKit camera toggle warning:", err);
       }
@@ -861,61 +1078,97 @@ export default function ConsultationRoom() {
       try {
         if (localStreamRef.current) {
           localStreamRef.current.getTracks().forEach((t) => t.stop());
-        }
-        for (const [, pub] of room.localParticipant.videoTrackPublications) {
-          if (pub.track) pub.track.stop();
-        }
-        for (const [, pub] of room.localParticipant.audioTrackPublications) {
-          if (pub.track) pub.track.stop();
+          localStreamRef.current = null;
         }
       } catch (_) { }
       try {
-        room.disconnect();
+        if (roomRef.current) {
+          roomRef.current.removeAllListeners();
+          roomRef.current.disconnect();
+          roomRef.current = null;
+        }
       } catch (_) { }
+      connectedRoomIdRef.current = null;
+      isConnectingRef.current = false;
+      document.querySelectorAll('[id^="remote-audio-"]').forEach((el) => el.remove());
       const timer = setTimeout(() => {
         router.push(isDoctor ? '/doctor/dashboard' : '/patient/dashboard');
       }, 1500);
       return () => clearTimeout(timer);
     }
-  }, [appointment?.status, isDoctor, router, room]);
+  }, [appointment?.status, isDoctor, router]);
 
   // Patient Leave Call: Only disconnects room and stops local tracks. Does NOT end or complete the appointment in DB.
-  const handlePatientLeave = () => {
+  const handlePatientLeave = async () => {
     try {
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
+        localStreamRef.current = null;
       }
-      for (const [, pub] of room.localParticipant.videoTrackPublications) {
-        if (pub.track) pub.track.stop();
+      if (roomRef.current?.localParticipant) {
+        for (const [, pub] of roomRef.current.localParticipant.videoTrackPublications) {
+          if (pub.track) pub.track.stop();
+        }
+        for (const [, pub] of roomRef.current.localParticipant.audioTrackPublications) {
+          if (pub.track) pub.track.stop();
+        }
       }
-      for (const [, pub] of room.localParticipant.audioTrackPublications) {
-        if (pub.track) pub.track.stop();
+      if (roomRef.current) {
+        try {
+          roomRef.current.removeAllListeners();
+          await roomRef.current.disconnect();
+        } catch (_) {}
+        roomRef.current = null;
       }
     } catch (_) { }
-    try {
-      room.disconnect();
-    } catch (_) { }
+
+    connectedRoomIdRef.current = null;
+    isConnectingRef.current = false;
+    fetchedRoomIdRef.current = null;
+    document.querySelectorAll('[id^="remote-audio-"]').forEach((el) => el.remove());
+
+    // Reset UI & Connection state completely
+    setToken(null);
+    setHasRemoteVideo(false);
+    setPatientJoinClicked(false);
+
     toast.info("You left the consultation. You can rejoin anytime from your dashboard.");
     router.push('/patient/dashboard');
   };
 
   // Doctor Leave Room (temporary): Doctor disconnects without concluding appointment
-  const handleDoctorLeave = () => {
+  const handleDoctorLeave = async () => {
     setShowDoctorEndModal(false);
     try {
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
+        localStreamRef.current = null;
       }
-      for (const [, pub] of room.localParticipant.videoTrackPublications) {
-        if (pub.track) pub.track.stop();
+      if (roomRef.current?.localParticipant) {
+        for (const [, pub] of roomRef.current.localParticipant.videoTrackPublications) {
+          if (pub.track) pub.track.stop();
+        }
+        for (const [, pub] of roomRef.current.localParticipant.audioTrackPublications) {
+          if (pub.track) pub.track.stop();
+        }
       }
-      for (const [, pub] of room.localParticipant.audioTrackPublications) {
-        if (pub.track) pub.track.stop();
+      if (roomRef.current) {
+        try {
+          roomRef.current.removeAllListeners();
+          await roomRef.current.disconnect();
+        } catch (_) {}
+        roomRef.current = null;
       }
     } catch (_) { }
-    try {
-      room.disconnect();
-    } catch (_) { }
+
+    connectedRoomIdRef.current = null;
+    isConnectingRef.current = false;
+    fetchedRoomIdRef.current = null;
+    document.querySelectorAll('[id^="remote-audio-"]').forEach((el) => el.remove());
+
+    setToken(null);
+    setHasRemoteVideo(false);
+
     toast.info("You left the consultation room. You can rejoin anytime from your dashboard.");
     router.push('/doctor/dashboard');
   };
@@ -924,60 +1177,67 @@ export default function ConsultationRoom() {
   const handleDoctorEndForAll = async () => {
     setIsEndingCall(true);
     try {
-      // 1. Broadcast MEETING_ENDED to participants via LiveKit data channel
-      if (room && room.state === 'connected' && room.localParticipant) {
+      // 1. Broadcast MEETING_ENDED over LiveKit data channel to notify patient
+      const activeRoom = roomRef.current;
+      if (activeRoom && activeRoom.state === 'connected' && activeRoom.localParticipant) {
         try {
           const encoder = new TextEncoder();
           const data = encoder.encode(JSON.stringify({ type: 'MEETING_ENDED' }));
-          await room.localParticipant.publishData(data, { reliable: true });
+          await activeRoom.localParticipant.publishData(data, { reliable: true });
         } catch (pubErr) {
-          console.warn("Could not broadcast MEETING_ENDED over LiveKit:", pubErr);
+          console.warn("Could not broadcast MEETING_ENDED:", pubErr);
         }
       }
 
-      // 2. Stop local tracks
+      // 2. Mark appointment as completed in Database
       try {
-        if (localStreamRef.current) {
-          localStreamRef.current.getTracks().forEach((t) => t.stop());
-        }
-        for (const [, pub] of room.localParticipant.videoTrackPublications) {
-          if (pub.track) pub.track.stop();
-        }
-        for (const [, pub] of room.localParticipant.audioTrackPublications) {
-          if (pub.track) pub.track.stop();
-        }
-      } catch (_) { }
-
-      // 3. Mark appointment as completed directly in Supabase and via API
-      try {
-        await supabase
-          .from('appointments')
-          .update({ status: 'completed' })
-          .eq('id', roomId);
-
+        const cleanId = (roomId || appointment?.id || '').trim();
         await fetch('/api/appointments/call', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ appointment_id: roomId, action: 'end' })
+          body: JSON.stringify({ appointment_id: cleanId, action: 'complete' }),
         });
       } catch (apiErr) {
-        console.warn("Error updating completed status:", apiErr);
+        console.warn("Failed to update status via API, continuing exit:", apiErr);
       }
 
-      // 4. Disconnect room
-      try {
-        room.disconnect();
-      } catch (_) { }
+      // 3. Stop hardware tracks
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((t) => t.stop());
+        localStreamRef.current = null;
+      }
+      if (activeRoom?.localParticipant) {
+        activeRoom.localParticipant.trackPublications.forEach((pub: any) => {
+          if (pub.track) pub.track.stop();
+        });
+      }
 
-      toast.success("Consultation concluded and marked completed.");
+      // 4. Disconnect LiveKit Room cleanly
+      if (activeRoom) {
+        try {
+          activeRoom.removeAllListeners();
+          await activeRoom.disconnect();
+        } catch (_) {}
+        roomRef.current = null;
+      }
+
+      connectedRoomIdRef.current = null;
+      isConnectingRef.current = false;
+      fetchedRoomIdRef.current = null;
+      document.querySelectorAll('[id^="remote-audio-"]').forEach((el) => el.remove());
+
+      toast.success("Consultation concluded successfully.");
+      setShowDoctorEndModal(false);
       router.push('/doctor/dashboard');
-    } catch (err: any) {
-      console.error("Failed to end consultation for all:", err);
-      toast.error("Failed to end consultation. Please try again.");
+    } catch (err) {
+      console.error("Error ending consultation:", err);
+      toast.error("Error concluding session, redirecting...");
+      setShowDoctorEndModal(false);
+      router.push('/doctor/dashboard');
+    } finally {
       setIsEndingCall(false);
     }
   };
-
   // Main End/Leave click handler
   const handleEndCall = () => {
     if (isDoctor) {

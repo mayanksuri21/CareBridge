@@ -51,6 +51,12 @@ function AuthPageContent() {
   const [status, setStatus] = useState<{ type: "success" | "error"; message: string } | null>(null)
 
   useEffect(() => {
+    if (searchParams.get("reset") === "success") {
+      setStatus({ type: "success", message: "Password reset successful! Please sign in with your new password." })
+    }
+  }, [searchParams])
+
+  useEffect(() => {
     if (!authLoading && session) {
       const doRedirect = async () => {
         const redirectUrl = await getPostLoginRedirect(session.user.id)
@@ -427,7 +433,15 @@ function AuthPageContent() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="signin-password">Password</Label>
+                      <div className="flex items-center justify-between">
+                        <Label htmlFor="signin-password">Password</Label>
+                        <Link
+                          href={`/forgot-password${email ? `?email=${encodeURIComponent(email)}` : ''}`}
+                          className="text-xs text-primary hover:underline font-medium"
+                        >
+                          Forgot password?
+                        </Link>
+                      </div>
                       <div className="relative">
                         <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                         <Input
