@@ -15,51 +15,59 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const patientId = searchParams.get('patient_id');
     const patientEmail = searchParams.get('email');
+    const appointmentId = searchParams.get('appointment_id') || searchParams.get('appointmentId');
+    const prescriptionId = searchParams.get('id') || searchParams.get('prescription_id');
 
-    let resolvedPatientId = patientId;
-    
-    // Fallback to logged-in user session
-    if (!resolvedPatientId) {
-      try {
-        const { cookies } = require("next/headers");
-        const { createServerClient } = require("@supabase/ssr");
-        const cookieStore = await cookies();
-        const userClient = createServerClient(supabaseUrl, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
-          cookies: {
-            get(name: string) { return cookieStore.get(name)?.value; },
-            set(name: string, value: string, options: any) { cookieStore.set({ name, value, ...options }); },
-            remove(name: string, options: any) { cookieStore.set({ name, value: "", ...options }); }
-          }
-        });
-        const { data: { user } } = await userClient.auth.getUser();
-        if (user) resolvedPatientId = user.id;
-      } catch (e) {
-        console.warn("Session check in prescriptions API failed:", e);
+    let query = supabaseAdmin.from('prescriptions').select('*');
+
+    if (prescriptionId) {
+      query = query.eq('id', prescriptionId);
+    } else if (appointmentId) {
+      query = query.eq('appointment_id', appointmentId);
+    } else {
+      let resolvedPatientId = patientId;
+      
+      // Fallback to logged-in user session
+      if (!resolvedPatientId) {
+        try {
+          const { cookies } = require("next/headers");
+          const { createServerClient } = require("@supabase/ssr");
+          const cookieStore = await cookies();
+          const userClient = createServerClient(supabaseUrl, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
+            cookies: {
+              get(name: string) { return cookieStore.get(name)?.value; },
+              set(name: string, value: string, options: any) { cookieStore.set({ name, value, ...options }); },
+              remove(name: string, options: any) { cookieStore.set({ name, value: "", ...options }); }
+            }
+          });
+          const { data: { user } } = await userClient.auth.getUser();
+          if (user) resolvedPatientId = user.id;
+        } catch (e) {
+          console.warn("Session check in prescriptions API failed:", e);
+        }
       }
+
+      if (!resolvedPatientId && patientEmail) {
+        const { data: profile } = await supabaseAdmin
+          .from('profiles')
+          .select('id')
+          .ilike('email', patientEmail)
+          .maybeSingle();
+        if (profile) resolvedPatientId = profile.id;
+      }
+
+      if (!resolvedPatientId) {
+        return NextResponse.json({ prescriptions: [] });
+      }
+
+      query = query.eq('patient_id', resolvedPatientId);
     }
 
-    if (!resolvedPatientId && patientEmail) {
-      const { data: profile } = await supabaseAdmin
-        .from('profiles')
-        .select('id')
-        .ilike('email', patientEmail)
-        .maybeSingle();
-      if (profile) resolvedPatientId = profile.id;
-    }
-
-    if (!resolvedPatientId) {
-      return NextResponse.json({ prescriptions: [] });
-    }
-
-    const { data: prescriptions, error } = await supabaseAdmin
-      .from('prescriptions')
-      .select('*')
-      .eq('patient_id', resolvedPatientId)
-      .order('created_at', { ascending: false });
+    const { data: prescriptions, error } = await query.order('created_at', { ascending: false });
 
     if (error || !prescriptions) {
       console.error('Error fetching prescriptions:', error);
-      return NextResponse.json({ prescriptions: [] });
+      return NextResponse.json({ prescriptions: [], prescription: null });
     }
 
     // Resolve doctor names
@@ -75,18 +83,18 @@ export async function GET(request: Request) {
       }
     }
 
-    // Resolve patient details
-    const { data: patientProfile } = await supabaseAdmin
-      .from('profiles')
-      .select('name, age, gender, email, phone')
-      .eq('id', resolvedPatientId)
-      .maybeSingle();
-
-    const patientName = patientProfile?.name || 'Suman Suri';
-    const patientAge = patientProfile?.age || '';
-    const patientGender = patientProfile?.gender || '';
-    const resolvedPatientEmail = patientProfile?.email || '';
-    const patientPhone = patientProfile?.phone || '';
+    // Resolve patient details across all retrieved prescriptions
+    const patientIds = Array.from(new Set(prescriptions.map((rx: any) => rx.patient_id).filter(Boolean)));
+    let patientMap = new Map();
+    if (patientIds.length > 0) {
+      const { data: patientProfiles } = await supabaseAdmin
+        .from('profiles')
+        .select('id, name, age, gender, email, phone')
+        .in('id', patientIds);
+      if (patientProfiles) {
+        patientMap = new Map(patientProfiles.map((p: any) => [p.id, p]));
+      }
+    }
 
     // Format output to ensure it matches the PrintablePrescription format
     const formatted = prescriptions.map((rx: any) => {
@@ -121,11 +129,20 @@ export async function GET(request: Request) {
       const docName = doc?.name || rx.doctor_name || 'Rahul Sharma';
       const cleanDocName = docName.startsWith('Dr. ') ? docName.substring(4) : docName;
 
+      const patientProf = patientMap.get(rx.patient_id);
+      const patientName = patientProf?.name || rx.patient_name || 'Patient';
+      const patientAge = patientProf?.age || '';
+      const patientGender = patientProf?.gender || '';
+      const resolvedPatientEmail = patientProf?.email || '';
+      const patientPhone = patientProf?.phone || '';
+
       return {
         id: rx.id,
+        appointment_id: rx.appointment_id,
         created_at: rx.created_at,
         doctor_id: rx.doctor_id,
         doctor_name: cleanDocName,
+        patient_id: rx.patient_id,
         patient_name: patientName,
         patient_age: patientAge,
         patient_gender: patientGender,
@@ -138,7 +155,10 @@ export async function GET(request: Request) {
       };
     });
 
-    return NextResponse.json({ prescriptions: formatted });
+    return NextResponse.json({ 
+      prescriptions: formatted,
+      prescription: formatted[0] || null 
+    });
   } catch (error: any) {
     console.error('Prescriptions GET Error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -158,7 +178,8 @@ export async function POST(request: Request) {
     const appointment_id = body.appointment_id || body.appointmentId;
     const doctor_id = body.doctor_id || body.doctorId;
     const patient_id = body.patient_id || body.patientId;
-    const diagnosis = body.diagnosis;
+    const prescription_id = body.prescription_id || body.prescriptionId || body.id;
+    const diagnosis = body.diagnosis || "Consultation Prescription";
     const medications = body.medications || body.medicines || [];
     const instructions = body.instructions || body.advice || body.notes || "";
 
@@ -175,6 +196,62 @@ export async function POST(request: Request) {
       }
     }
 
+    const formattedNote = `Diagnosis: ${diagnosis}\n\nMedications: ${JSON.stringify(medications)}\n\nInstructions: ${instructions}`;
+
+    // Check if prescription already exists to UPDATE in place instead of creating duplicate
+    let existingRx: any = null;
+    if (prescription_id) {
+      const { data } = await supabaseAdmin
+        .from('prescriptions')
+        .select('id, note, appointment_id, patient_id, doctor_id')
+        .eq('id', prescription_id)
+        .maybeSingle();
+      existingRx = data;
+    } else if (appointment_id) {
+      const { data } = await supabaseAdmin
+        .from('prescriptions')
+        .select('id, note, appointment_id, patient_id, doctor_id')
+        .eq('appointment_id', appointment_id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      existingRx = data;
+    }
+
+    if (existingRx) {
+      let updatedResult;
+      try {
+        const { data, error } = await supabaseAdmin
+          .from('prescriptions')
+          .update({
+            diagnosis,
+            medicines: medications,
+            advice: instructions,
+            note: formattedNote
+          })
+          .eq('id', existingRx.id)
+          .select()
+          .single();
+        if (error) throw error;
+        updatedResult = data;
+      } catch {
+        const { data, error } = await supabaseAdmin
+          .from('prescriptions')
+          .update({
+            note: formattedNote
+          })
+          .eq('id', existingRx.id)
+          .select()
+          .single();
+        if (error) {
+          return NextResponse.json({ error: error.message }, { status: 400 });
+        }
+        updatedResult = data;
+      }
+
+      return NextResponse.json({ ok: true, prescription: updatedResult, updated: true });
+    }
+
     let insertResult;
     try {
       const { data, error } = await supabaseAdmin
@@ -188,7 +265,7 @@ export async function POST(request: Request) {
             diagnosis,
             medicines: medications,
             advice: instructions,
-            note: instructions, // Store cleanly as instructions
+            note: formattedNote,
             created_at: new Date().toISOString()
           }
         ])
@@ -200,7 +277,6 @@ export async function POST(request: Request) {
     } catch (err: any) {
       console.warn('Inserting using baseline prescriptions schema fallback...', err.message);
       
-      const formattedNote = `Diagnosis: ${diagnosis || 'General Consultation'}\n\nMedications: ${JSON.stringify(medications)}\n\nInstructions: ${instructions}`;
       const { data, error } = await supabaseAdmin
         .from('prescriptions')
         .insert([

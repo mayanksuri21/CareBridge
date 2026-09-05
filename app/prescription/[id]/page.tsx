@@ -70,15 +70,16 @@ export default async function PrescriptionPage({ params }: PrescriptionPageProps
   const patientName = patient.name;
   
   // Format medicines list
-  let medicinesList = [];
+  let medicinesList: any[] = [];
   if (presc.medicines) {
     medicinesList = typeof presc.medicines === "string" ? JSON.parse(presc.medicines) : presc.medicines;
   } else if (itemsRes.data && itemsRes.data.length > 0) {
     medicinesList = itemsRes.data.map((item: any) => ({
-      medicineName: item.medication_name,
+      name: item.medication_name || item.name,
       dosage: item.dosage,
       frequency: item.frequency,
-      duration: item.duration
+      duration: item.duration,
+      instructions: item.instructions
     }));
   } else if (presc.note) {
     try {
@@ -87,11 +88,27 @@ export default async function PrescriptionPage({ params }: PrescriptionPageProps
     } catch {}
   }
 
+  // Normalize each medicine item
+  medicinesList = (medicinesList || []).map((med: any) => ({
+    name: med.medication_name || med.medicineName || med.name || "Prescribed Medication",
+    dosage: med.dosage || "-",
+    frequency: med.frequency || med.instructions || "-",
+    duration: med.duration || "-",
+    instructions: med.instructions || med.frequency || "-"
+  }));
+
+  // Format clean diagnosis
+  let cleanDiagnosis = presc.diagnosis || "General Consultation";
+  if (!presc.diagnosis && presc.note && presc.note.includes("Diagnosis:")) {
+    const diagMatch = presc.note.match(/Diagnosis:\s*([^\n\r]*)/i);
+    if (diagMatch && diagMatch[1].trim()) cleanDiagnosis = diagMatch[1].trim();
+  }
+
   // Format clean advice/instructions
   let cleanAdvice = presc.advice || presc.note || "Follow prescribed dosage";
   if (presc.note && presc.note.includes("Instructions:")) {
     const match = presc.note.match(/Instructions:\s*([\s\S]*)/i);
-    if (match) cleanAdvice = match[1].trim();
+    if (match && match[1].trim()) cleanAdvice = match[1].trim();
   }
 
   return (
@@ -171,7 +188,7 @@ export default async function PrescriptionPage({ params }: PrescriptionPageProps
             <div className="space-y-1">
               <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Chief Diagnosis</span>
               <p className="text-base font-bold text-slate-800 dark:text-slate-200">
-                {presc.diagnosis || "General Consultation"}
+                {cleanDiagnosis}
               </p>
             </div>
 
@@ -195,7 +212,7 @@ export default async function PrescriptionPage({ params }: PrescriptionPageProps
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                     {medicinesList.map((med: any, index: number) => (
                       <tr key={index} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/10">
-                        <td className="p-3 font-bold text-slate-800 dark:text-slate-100">{med.medicineName || med.name}</td>
+                        <td className="p-3 font-bold text-slate-800 dark:text-slate-100">{med.name}</td>
                         <td className="p-3 text-muted-foreground">{med.dosage || "-"}</td>
                         <td className="p-3 text-muted-foreground">{med.frequency || "-"}</td>
                         <td className="p-3 text-muted-foreground">{med.duration || "-"}</td>

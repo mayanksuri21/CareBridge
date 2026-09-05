@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import {
   Mic, MicOff, Video, VideoOff, PhoneOff, User, Activity, Loader2,
   Check, X, LogOut, ShieldAlert, FileText, Plus, Trash, AlertCircle,
-  Clock, Calendar, Sparkles
+  Clock, Calendar, Sparkles, Edit3, ExternalLink
 } from 'lucide-react';
 import Link from 'next/link';
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -25,6 +25,11 @@ export default function ConsultationRoom() {
   const params = useParams();
   const router = useRouter();
   const isTypingNotesRef = useRef(false);
+  const lastSavedNotesRef = useRef<string>('');
+  const latestNotesRef = useRef<string>('');
+  const notesTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isSavingNotesRef = useRef<boolean>(false);
+  const appointmentRef = useRef<any>(null);
 
   // Robust appointment ID extraction across Next.js App Router param variants
   const rawAppointmentId = (params?.appointmentId || params?.id) as string | string[] | undefined;
@@ -87,11 +92,39 @@ export default function ConsultationRoom() {
 
   // Clinical Notes & Prescriptions State
   const [clinicalNotes, setClinicalNotes] = useState('');
-  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'idle'>('idle');
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'idle' | 'error'>('idle');
+
+  useEffect(() => {
+    appointmentRef.current = appointment;
+  }, [appointment]);
 
   const [medicines, setMedicines] = useState<MedicineInput[]>([]);
   const [medInput, setMedInput] = useState<MedicineInput>({ name: '', dosage: '', duration: '', instructions: '' });
   const [sendingPrescription, setSendingPrescription] = useState(false);
+  const [consultationPrescription, setConsultationPrescription] = useState<any>(null);
+  const [isEditingPrescription, setIsEditingPrescription] = useState(false);
+
+  // Real-time prescription sync during active consultation
+  const fetchConsultationPrescription = useCallback(async () => {
+    if (!roomId || roomId === 'consultation') return;
+    try {
+      const res = await fetch(`/api/prescriptions?appointment_id=${roomId}`, { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.prescription) {
+          setConsultationPrescription(data.prescription);
+        }
+      }
+    } catch (err) {
+      console.warn("Could not fetch consultation prescription:", err);
+    }
+  }, [roomId]);
+
+  useEffect(() => {
+    fetchConsultationPrescription();
+    const interval = setInterval(fetchConsultationPrescription, 4000);
+    return () => clearInterval(interval);
+  }, [fetchConsultationPrescription]);
 
   // Leave vs End Call Modal State (Google Meet style for Doctor)
   const [showDoctorEndModal, setShowDoctorEndModal] = useState(false);
@@ -257,7 +290,12 @@ export default function ConsultationRoom() {
         const notesMatch = (apptData.reason || apptData.raw_reason)?.match(/\[CLINICAL_NOTES\]:\s*([\s\S]*)/i);
         const notesVal = notesMatch ? notesMatch[1].trim() : '';
         if (notesVal && !isTypingNotesRef.current) {
-          setClinicalNotes((prev) => (prev && prev.trim() !== '' ? prev : notesVal));
+          setClinicalNotes((prev) => {
+            if (prev && prev.trim() !== '') return prev;
+            lastSavedNotesRef.current = notesVal;
+            latestNotesRef.current = notesVal;
+            return notesVal;
+          });
         }
         setLoadingAppt(false);
         return;
@@ -908,25 +946,41 @@ export default function ConsultationRoom() {
     };
   }, []);
 
-  // 8. Clinical Notes Debounced Autosave
+  // 8. Clinical Notes Debounced Autosave (Decoupled from appointment polling loop)
   useEffect(() => {
-    if (!appointment || !isDoctor || clinicalNotes === '') return;
+    latestNotesRef.current = clinicalNotes;
 
-    const notesMatch = appointment.reason?.match(/\[CLINICAL_NOTES\]:\s*([\s\S]*)/i);
-    const initialNotes = notesMatch ? notesMatch[1].trim() : '';
-    if (clinicalNotes === initialNotes) return;
+    if (!isDoctor || !roomId) return;
 
-    setSaveStatus('saving');
+    // Do not save if notes match what is already known to be saved
+    if (clinicalNotes === lastSavedNotesRef.current) {
+      return;
+    }
 
-    const timeout = setTimeout(async () => {
+    // Clear any pending debounce timer
+    if (notesTimeoutRef.current) {
+      clearTimeout(notesTimeoutRef.current);
+    }
+
+    // Debounce save by 1200ms
+    notesTimeoutRef.current = setTimeout(async () => {
+      const noteToSave = latestNotesRef.current;
+      if (noteToSave === lastSavedNotesRef.current || isSavingNotesRef.current) {
+        return;
+      }
+
+      isSavingNotesRef.current = true;
+      setSaveStatus('saving');
+
       try {
-        let cleanReason = appointment.reason || '';
+        const appt = appointmentRef.current;
+        let cleanReason = appt?.reason || appt?.raw_reason || '';
         const notesIdx = cleanReason.indexOf('\n\n[CLINICAL_NOTES]:');
         if (notesIdx !== -1) {
           cleanReason = cleanReason.substring(0, notesIdx);
         }
 
-        const newReason = `${cleanReason}\n\n[CLINICAL_NOTES]: ${clinicalNotes}`;
+        const newReason = `${cleanReason}\n\n[CLINICAL_NOTES]: ${noteToSave}`;
 
         const { error } = await supabase
           .from('appointments')
@@ -934,15 +988,29 @@ export default function ConsultationRoom() {
           .eq('id', roomId);
 
         if (error) throw error;
-        setSaveStatus('saved');
+
+        lastSavedNotesRef.current = noteToSave;
+        if (latestNotesRef.current === noteToSave) {
+          setSaveStatus('saved');
+        }
       } catch (err) {
         console.error("Autosave notes failed:", err);
-        setSaveStatus('idle');
+        setSaveStatus('error');
+      } finally {
+        isSavingNotesRef.current = false;
+        // If doctor typed more while save was in-flight, return to idle so next debounce can save
+        if (latestNotesRef.current !== lastSavedNotesRef.current) {
+          setSaveStatus('idle');
+        }
       }
-    }, 1500);
+    }, 1200);
 
-    return () => clearTimeout(timeout);
-  }, [clinicalNotes, appointment, isDoctor, roomId, supabase]);
+    return () => {
+      if (notesTimeoutRef.current) {
+        clearTimeout(notesTimeoutRef.current);
+      }
+    };
+  }, [clinicalNotes, isDoctor, roomId, supabase]);
 
   // 9. Draggable self preview helpers (Touch & Mouse)
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -1313,6 +1381,26 @@ export default function ConsultationRoom() {
       return;
     }
 
+    // Flush any pending unsaved clinical notes in background without blocking prescription finalization
+    if (latestNotesRef.current && latestNotesRef.current !== lastSavedNotesRef.current) {
+      if (notesTimeoutRef.current) clearTimeout(notesTimeoutRef.current);
+      const noteToSave = latestNotesRef.current;
+      const appt = appointmentRef.current;
+      let cleanReason = appt?.reason || appt?.raw_reason || '';
+      const notesIdx = cleanReason.indexOf('\n\n[CLINICAL_NOTES]:');
+      if (notesIdx !== -1) cleanReason = cleanReason.substring(0, notesIdx);
+      const newReason = `${cleanReason}\n\n[CLINICAL_NOTES]: ${noteToSave}`;
+      supabase.from('appointments').update({ reason: newReason }).eq('id', roomId).then(
+        ({ error }: any) => {
+          if (!error) {
+            lastSavedNotesRef.current = noteToSave;
+            setSaveStatus('saved');
+          }
+        },
+        () => {}
+      );
+    }
+
     setSendingPrescription(true);
     try {
       const medicationsFormatted = medicines.map((m) => ({
@@ -1328,8 +1416,9 @@ export default function ConsultationRoom() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           appointment_id: roomId,
-          doctor_id: appointment.doctor_id || currentUser?.id,
-          patient_id: appointment.patient_id,
+          prescription_id: consultationPrescription?.id,
+          doctor_id: appointment?.doctor_id || currentUser?.id,
+          patient_id: appointment?.patient_id,
           diagnosis: "Consultation Prescription",
           medications: medicationsFormatted,
           instructions: clinicalNotes || "Follow prescribed dosage",
@@ -1341,8 +1430,9 @@ export default function ConsultationRoom() {
         throw new Error(errData.error || "Failed to finalize prescription");
       }
 
-      toast.success("Prescription finalized and saved to patient's medical records!");
-      setMedicines([]);
+      toast.success(isEditingPrescription ? "Prescription updated and synced with patient!" : "Prescription finalized and saved to patient's medical records!");
+      setIsEditingPrescription(false);
+      await fetchConsultationPrescription();
     } catch (err: any) {
       console.error("Prescription finalization error:", err);
       toast.error(err.message || "Failed to finalize prescription.");
@@ -1719,6 +1809,102 @@ export default function ConsultationRoom() {
                 </button>
               </div>
             </div>
+
+            {/* Active Patient In-Consultation Prescription Viewer (Task 4 & 6) */}
+            {!isDoctor && (
+              <div className="bg-[#0f172a]/90 border border-slate-800/90 rounded-2xl p-5 shadow-xl backdrop-blur-md space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center">
+                      <FileText className="w-4 h-4 text-emerald-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                        Doctor&apos;s Prescription
+                        {consultationPrescription && (
+                          <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-semibold">
+                            Issued &amp; Active
+                          </span>
+                        )}
+                      </h3>
+                      <p className="text-[11px] text-slate-400">
+                        {appointment?.doctor_name ? `Dr. ${appointment.doctor_name.replace(/^Dr\.\s*/i, '')}` : "Attending Doctor"}
+                      </p>
+                    </div>
+                  </div>
+                  {consultationPrescription && (
+                    <div className="flex items-center gap-2">
+                      <a
+                        href={`/prescription/${consultationPrescription.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition border border-slate-700 flex items-center gap-1.5"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5 text-indigo-400" />
+                        View Full Document
+                      </a>
+                      <a
+                        href={`/api/prescriptions/pdf?id=${consultationPrescription.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-xs font-bold transition shadow-md shadow-emerald-600/20 flex items-center gap-1.5"
+                      >
+                        Download PDF
+                      </a>
+                    </div>
+                  )}
+                </div>
+
+                {consultationPrescription ? (
+                  <div className="space-y-4">
+                    <div className="text-xs text-slate-300">
+                      <span className="text-slate-500 font-medium">Diagnosis: </span>
+                      <span className="text-white font-semibold">{consultationPrescription.diagnosis || "Consultation Prescription"}</span>
+                    </div>
+
+                    {consultationPrescription.medicines && consultationPrescription.medicines.length > 0 ? (
+                      <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950/80">
+                        <table className="w-full text-xs text-left">
+                          <thead className="bg-slate-900 text-slate-400 text-[10px] uppercase font-semibold">
+                            <tr>
+                              <th className="p-2.5">Medication</th>
+                              <th className="p-2.5">Dosage</th>
+                              <th className="p-2.5">Frequency</th>
+                              <th className="p-2.5">Duration</th>
+                              <th className="p-2.5">Instructions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800 text-slate-300">
+                            {consultationPrescription.medicines.map((m: any, idx: number) => (
+                              <tr key={idx} className="hover:bg-slate-900/40">
+                                <td className="p-2.5 font-medium text-white">{m.medication_name || m.name || m.medicineName}</td>
+                                <td className="p-2.5 text-slate-400">{m.dosage || "-"}</td>
+                                <td className="p-2.5 text-slate-400">{m.frequency || "-"}</td>
+                                <td className="p-2.5 text-slate-400">{m.duration || "-"}</td>
+                                <td className="p-2.5 text-slate-400">{m.instructions || "-"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-400 italic">No specific medications listed.</p>
+                    )}
+
+                    {consultationPrescription.advice && (
+                      <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-3 text-xs">
+                        <span className="text-slate-400 font-semibold block text-[10px] uppercase mb-1">Doctor&apos;s Advice &amp; Instructions:</span>
+                        <p className="text-slate-200">{consultationPrescription.advice}</p>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="py-6 text-center text-slate-500 text-xs">
+                    <p>No prescription issued yet. Once your doctor writes and finalizes your prescription during this session, it will automatically appear here in real-time.</p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* RIGHT SIDE (1 Column, CONDITIONAL FOR DOCTOR ONLY): Clinical Side Panel (Task 2) */}
@@ -1815,6 +2001,11 @@ export default function ConsultationRoom() {
                       <Check className="w-3.5 h-3.5" /> Saved
                     </span>
                   )}
+                  {saveStatus === 'error' && (
+                    <span className="text-[10px] text-rose-400 flex items-center gap-1">
+                      <AlertCircle className="w-3.5 h-3.5" /> Save failed
+                    </span>
+                  )}
                 </div>
                 <textarea
                   placeholder="Type clinical observations, physical examination notes, advice, or diagnosis here..."
@@ -1827,119 +2018,219 @@ export default function ConsultationRoom() {
                 />
               </div>
 
-              {/* 3. Prescription Form (Task 2) */}
-              <div className="bg-[#0f172a]/90 border border-slate-800/90 rounded-2xl p-5 shadow-xl backdrop-blur-md space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
-                  <h3 className="text-xs font-bold text-indigo-400 uppercase tracking-wider flex items-center gap-2">
-                    <FileText className="w-4 h-4" /> Prescription Pad
-                  </h3>
-                  <span className="text-[10px] text-slate-500">Rx Formulary</span>
-                </div>
+              {/* 3. Prescription Pad & Finalized Viewer (Doctor side) */}
+              {consultationPrescription && !isEditingPrescription ? (
+                <div className="bg-[#0f172a]/90 border border-slate-800/90 rounded-2xl p-5 shadow-xl backdrop-blur-md space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+                    <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-2">
+                      <Check className="w-4 h-4 text-emerald-400" /> Prescription Finalized
+                    </h3>
+                    <span className="text-[10px] bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 px-2 py-0.5 rounded-full font-medium">
+                      Active for Patient
+                    </span>
+                  </div>
 
-                {/* Medication Inputs */}
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="space-y-1">
-                    <label className="text-[10px] text-slate-400 block font-medium">Medication Name</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Amoxicillin 500mg"
-                      value={medInput.name}
-                      onChange={(e) => setMedInput({ ...medInput, name: e.target.value })}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
-                    />
+                  <div className="text-xs text-slate-300">
+                    <span className="text-slate-500 font-medium">Diagnosis: </span>
+                    <span className="text-white font-semibold">{consultationPrescription.diagnosis || "Consultation Prescription"}</span>
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] text-slate-400 block font-medium">Dosage</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. 1 Capsule"
-                      value={medInput.dosage}
-                      onChange={(e) => setMedInput({ ...medInput, dosage: e.target.value })}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] text-slate-400 block font-medium">Frequency / Instructions</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Twice daily after meals"
-                      value={medInput.instructions}
-                      onChange={(e) => setMedInput({ ...medInput, instructions: e.target.value })}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] text-slate-400 block font-medium">Duration</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. 5 days"
-                      value={medInput.duration}
-                      onChange={(e) => setMedInput({ ...medInput, duration: e.target.value })}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                </div>
 
-                <button
-                  type="button"
-                  onClick={handleAddMedicine}
-                  className="w-full py-2 bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer border border-slate-700"
-                >
-                  <Plus className="w-3.5 h-3.5 text-indigo-400" /> Add Medication
-                </button>
-
-                {/* Medicines List Table */}
-                {medicines.length > 0 && (
-                  <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950/80 max-h-36 overflow-y-auto">
-                    <table className="w-full text-xs text-left">
-                      <thead className="bg-slate-900/90 text-slate-400 text-[10px] uppercase font-semibold">
-                        <tr>
-                          <th className="p-2">Medication</th>
-                          <th className="p-2">Dosage</th>
-                          <th className="p-2">Duration</th>
-                          <th className="p-2 text-right">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/80 text-slate-300">
-                        {medicines.map((m, idx) => (
-                          <tr key={idx} className="hover:bg-slate-900/40">
-                            <td className="p-2 font-medium text-white">{m.name}</td>
-                            <td className="p-2 text-slate-400">{m.dosage}</td>
-                            <td className="p-2 text-slate-400">{m.duration}</td>
-                            <td className="p-2 text-right">
-                              <button
-                                type="button"
-                                onClick={() => handleRemoveMedicine(idx)}
-                                className="p-1 text-rose-400 hover:bg-rose-950/60 rounded cursor-pointer transition"
-                              >
-                                <Trash className="w-3.5 h-3.5" />
-                              </button>
-                            </td>
+                  {consultationPrescription.medicines && consultationPrescription.medicines.length > 0 && (
+                    <div className="border border-slate-800/80 rounded-xl overflow-hidden bg-slate-950/80">
+                      <table className="w-full text-xs text-left">
+                        <thead className="bg-slate-900/90 text-slate-400 text-[10px] uppercase font-semibold">
+                          <tr>
+                            <th className="p-2">Medication</th>
+                            <th className="p-2">Dosage</th>
+                            <th className="p-2">Duration</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-
-                {/* Save & Finalize Prescription Button */}
-                <button
-                  type="button"
-                  onClick={handleSaveAndFinalizePrescription}
-                  disabled={sendingPrescription || medicines.length === 0}
-                  className="w-full py-3 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl transition shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2 cursor-pointer border border-indigo-400/30"
-                >
-                  {sendingPrescription ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" /> Saving & Finalizing...
-                    </>
-                  ) : (
-                    <>
-                      <Check className="w-4 h-4" /> Save & Finalize Prescription
-                    </>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/80 text-slate-300">
+                          {consultationPrescription.medicines.map((m: any, idx: number) => (
+                            <tr key={idx} className="hover:bg-slate-900/40">
+                              <td className="p-2 font-medium text-white">{m.medication_name || m.name || m.medicineName}</td>
+                              <td className="p-2 text-slate-400">{m.dosage || "-"}</td>
+                              <td className="p-2 text-slate-400">{m.duration || m.frequency || "-"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   )}
-                </button>
-              </div>
+
+                  {consultationPrescription.advice && (
+                    <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-3 text-xs">
+                      <span className="text-slate-400 font-semibold block text-[10px] uppercase mb-1">Advice &amp; Instructions:</span>
+                      <p className="text-slate-200">{consultationPrescription.advice}</p>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsEditingPrescription(true);
+                        if (consultationPrescription.medicines) {
+                          setMedicines(consultationPrescription.medicines.map((m: any) => ({
+                            name: m.medication_name || m.name || m.medicineName || '',
+                            dosage: m.dosage || '',
+                            duration: m.duration || '',
+                            instructions: m.instructions || m.frequency || ''
+                          })));
+                        }
+                        if (consultationPrescription.advice && !clinicalNotes) {
+                          setClinicalNotes(consultationPrescription.advice);
+                        }
+                      }}
+                      className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center justify-center gap-1.5 transition border border-slate-700 cursor-pointer"
+                    >
+                      <Edit3 className="w-3.5 h-3.5 text-indigo-400" /> Edit Prescription
+                    </button>
+                    <a
+                      href={`/prescription/${consultationPrescription.id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="py-2.5 px-3 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 text-xs font-semibold flex items-center justify-center gap-1.5 transition border border-indigo-500/30 text-center"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" /> View Document
+                    </a>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-[#0f172a]/90 border border-slate-800/90 rounded-2xl p-5 shadow-xl backdrop-blur-md space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+                    <h3 className="text-xs font-bold text-indigo-400 uppercase tracking-wider flex items-center gap-2">
+                      <FileText className="w-4 h-4" /> {isEditingPrescription ? "Edit Finalized Prescription" : "Prescription Pad"}
+                    </h3>
+                    {isEditingPrescription ? (
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingPrescription(false)}
+                        className="text-[10px] text-rose-400 hover:underline cursor-pointer"
+                      >
+                        Cancel Edit
+                      </button>
+                    ) : (
+                      <span className="text-[10px] text-slate-500">Rx Formulary</span>
+                    )}
+                  </div>
+
+                  {/* Medication Inputs */}
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-slate-400 block font-medium">Medication Name</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Amoxicillin 500mg"
+                        value={medInput.name}
+                        onChange={(e) => setMedInput({ ...medInput, name: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-slate-400 block font-medium">Dosage</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 1 Capsule"
+                        value={medInput.dosage}
+                        onChange={(e) => setMedInput({ ...medInput, dosage: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-slate-400 block font-medium">Frequency / Instructions</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Twice daily after meals"
+                        value={medInput.instructions}
+                        onChange={(e) => setMedInput({ ...medInput, instructions: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-slate-400 block font-medium">Duration</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 5 days"
+                        value={medInput.duration}
+                        onChange={(e) => setMedInput({ ...medInput, duration: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleAddMedicine}
+                    className="w-full py-2 bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer border border-slate-700"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-indigo-400" /> Add Medication
+                  </button>
+
+                  {/* Medicines List Table */}
+                  {medicines.length > 0 && (
+                    <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950/80 max-h-36 overflow-y-auto">
+                      <table className="w-full text-xs text-left">
+                        <thead className="bg-slate-900/90 text-slate-400 text-[10px] uppercase font-semibold">
+                          <tr>
+                            <th className="p-2">Medication</th>
+                            <th className="p-2">Dosage</th>
+                            <th className="p-2">Duration</th>
+                            <th className="p-2 text-right">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/80 text-slate-300">
+                          {medicines.map((m, idx) => (
+                            <tr key={idx} className="hover:bg-slate-900/40">
+                              <td className="p-2 font-medium text-white">{m.name}</td>
+                              <td className="p-2 text-slate-400">{m.dosage}</td>
+                              <td className="p-2 text-slate-400">{m.duration}</td>
+                              <td className="p-2 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveMedicine(idx)}
+                                  className="p-1 text-rose-400 hover:bg-rose-950/60 rounded cursor-pointer transition"
+                                >
+                                  <Trash className="w-3.5 h-3.5" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Save & Finalize Prescription Button */}
+                  <div className="flex gap-2">
+                    {isEditingPrescription && (
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingPrescription(false)}
+                        className="py-3 px-4 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-xl transition cursor-pointer border border-slate-700"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleSaveAndFinalizePrescription}
+                      disabled={sendingPrescription || medicines.length === 0}
+                      className="flex-1 py-3 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl transition shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2 cursor-pointer border border-indigo-400/30"
+                    >
+                      {sendingPrescription ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" /> {isEditingPrescription ? "Updating..." : "Saving & Finalizing..."}
+                        </>
+                      ) : (
+                        <>
+                          <Check className="w-4 h-4" /> {isEditingPrescription ? "Update & Finalize Prescription" : "Save & Finalize Prescription"}
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

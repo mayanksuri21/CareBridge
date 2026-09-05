@@ -1,7 +1,8 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Download, Pill } from "lucide-react"
+import { Download, Pill, FileText } from "lucide-react"
+import Link from "next/link"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -65,9 +66,18 @@ export function PatientPrescriptionsSection({ fallbackPrescriptions = [] }: Pati
                   </CardDescription>
                 </div>
               </div>
-              <Button size="sm" onClick={() => generatePrescriptionPDF(prescription)}>
-                <Download />Download e-Prescription (PDF)
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button asChild size="sm">
+                  <Link href={`/prescription/${prescription.id}`} target="_blank">
+                    <FileText className="mr-1.5 h-4 w-4" /> View Prescription
+                  </Link>
+                </Button>
+                <Button asChild size="sm" variant="outline">
+                  <a href={`/api/prescriptions/pdf?id=${prescription.id}`} target="_blank" rel="noreferrer">
+                    <Download className="mr-1.5 h-4 w-4" /> Download PDF
+                  </a>
+                </Button>
+              </div>
             </div>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground" suppressHydrationWarning>

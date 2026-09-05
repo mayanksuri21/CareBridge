@@ -704,10 +704,20 @@ export function PatientDashboardClient({
                             </CardDescription>
                           </div>
                         </div>
-                        <Button size="sm" onClick={() => generatePrescriptionPDF(prescription)} className="bg-slate-800 hover:bg-slate-700 border border-slate-750 text-slate-205 rounded-xl shadow-md transition-all self-start sm:self-center text-xs">
-                          <Download className="mr-1.5 h-4 w-4 text-emerald-450" />
-                          Download (PDF)
-                        </Button>
+                        <div className="flex items-center gap-2 self-start sm:self-center">
+                          <Button asChild size="sm" className="bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl shadow-md transition-all text-xs">
+                            <Link href={`/prescription/${prescription.id}`} target="_blank">
+                              <FileText className="mr-1.5 h-3.5 w-3.5" />
+                              View Prescription
+                            </Link>
+                          </Button>
+                          <Button asChild size="sm" variant="outline" className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 rounded-xl shadow-md transition-all text-xs">
+                            <a href={`/api/prescriptions/pdf?id=${prescription.id}`} target="_blank" rel="noreferrer">
+                              <Download className="mr-1.5 h-3.5 w-3.5 text-emerald-400" />
+                              Download (PDF)
+                            </a>
+                          </Button>
+                        </div>
                       </div>
                     </CardHeader>
                     <CardContent className="text-xs text-slate-350 bg-slate-950/20 p-4 border-t border-slate-900" suppressHydrationWarning>

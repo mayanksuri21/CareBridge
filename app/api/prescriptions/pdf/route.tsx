@@ -12,7 +12,7 @@ function PrescriptionPDF({ presc, items, doctorName, patient }: any) {
     tagline: { fontSize: 9, color: "#0284c7", marginTop: 2 },
     doctorInfo: { textAlign: "right" },
     docName: { fontSize: 12, fontWeight: "bold" },
-    metaGrid: { flexDirection: "row", flexWrap: "wrap", backgroundColor: "#f8fafc", borderRadius: 8, padding: 12, marginBottom: 20, border: 1, borderColor: "#e2e8f0" },
+    metaGrid: { flexDirection: "row", flexWrap: "wrap", backgroundColor: "#f8fafc", borderRadius: 8, padding: 12, marginBottom: 20, borderWidth: 1, borderStyle: "solid", borderColor: "#e2e8f0" },
     metaCol: { width: "50%", marginBottom: 8, paddingRight: 10 },
     label: { fontSize: 8, color: "#64748b", textTransform: "uppercase", fontWeight: "bold", marginBottom: 2 },
     value: { fontSize: 10, fontWeight: "medium", color: "#0f172a" },
@@ -153,20 +153,45 @@ export async function GET(req: Request) {
     const doctorName = docProfileRes.data?.name || presc.doctor_name || "Rahul Sharma";
     const cleanDoctorName = doctorName.startsWith("Dr. ") ? doctorName : `Dr. ${doctorName}`;
     const patient = patProfileRes.data || {
-      name: "Suman Suri",
-      email: "sumansuri0214@gmail.com",
-      age: 28,
-      gender: "Female",
-      phone: "+1 (555) 123-4567"
+      name: "Patient",
+      email: "",
+      age: "",
+      gender: "",
+      phone: ""
     };
+
+    let items = itemsRes.data || [];
+    if (!items || items.length === 0) {
+      if (presc.medicines) {
+        items = typeof presc.medicines === "string" ? JSON.parse(presc.medicines) : presc.medicines;
+      } else if (presc.note) {
+        try {
+          const match = presc.note.match(/Medications:\s*(\[.*\])/i);
+          if (match) items = JSON.parse(match[1]);
+        } catch {}
+      }
+    }
+
+    items = (items || []).map((it: any) => ({
+      medication_name: it.medication_name || it.medicineName || it.name || "Prescribed Medication",
+      dosage: it.dosage || "-",
+      frequency: it.frequency || it.instructions || "-",
+      duration: it.duration || "-",
+    }));
+
+    let cleanDiagnosis = presc.diagnosis;
+    if (!cleanDiagnosis && presc.note && presc.note.includes("Diagnosis:")) {
+      const diagMatch = presc.note.match(/Diagnosis:\s*([^\n\r]*)/i);
+      if (diagMatch && diagMatch[1].trim()) cleanDiagnosis = diagMatch[1].trim();
+    }
 
     const qrData = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/prescription/${id}`;
     const qr = await QRCode.toDataURL(qrData);
 
     const pdfOutput: any = await pdf(
       <PrescriptionPDF
-        presc={{ ...presc, qr }}
-        items={itemsRes.data || []}
+        presc={{ ...presc, diagnosis: cleanDiagnosis || presc.diagnosis || "General Consultation", qr }}
+        items={items}
         doctorName={cleanDoctorName}
         patient={patient}
       />

@@ -3,7 +3,7 @@ export type PrintablePrescription = {
   created_at: string
   doctor_name: string | null
   diagnosis: string | null
-  medicines: Array<{ name: string; dosage?: string; frequency?: string; duration?: string }>
+  medicines: Array<{ name?: string; medication_name?: string; medicineName?: string; dosage?: string; frequency?: string; duration?: string; instructions?: string }>
   advice: string | null
   instructions?: string | null
   patient_name?: string | null
@@ -15,12 +15,19 @@ export function generatePrescriptionPDF(prescription: PrintablePrescription) {
   const popup = window.open("", "_blank")
   if (!popup) return
   
-  const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (character) => ({
+  const escapeHtml = (value: any) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"
   }[character] ?? character))
   
-  const rows = prescription.medicines
-    .map((medicine) => `<tr><td>${escapeHtml(medicine.name)}</td><td>${escapeHtml(medicine.dosage ?? "-")}</td><td>${escapeHtml(medicine.frequency ?? "-")}</td><td>${escapeHtml(medicine.duration ?? "-")}</td></tr>`)
+  const medicineList = Array.isArray(prescription.medicines) ? prescription.medicines : []
+  const rows = medicineList
+    .map((medicine: any) => {
+      const medName = medicine.medication_name || medicine.name || medicine.medicineName || "Prescribed Medicine"
+      const dosage = medicine.dosage || "-"
+      const frequency = medicine.frequency || medicine.instructions || "-"
+      const duration = medicine.duration || "-"
+      return `<tr><td>${escapeHtml(medName)}</td><td>${escapeHtml(dosage)}</td><td>${escapeHtml(frequency)}</td><td>${escapeHtml(duration)}</td></tr>`
+    })
     .join("")
     
   const doctorLabel = prescription.doctor_name 

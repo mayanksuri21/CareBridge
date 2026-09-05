@@ -14,7 +14,9 @@ import {
   Stethoscope,
   MessageSquare,
   Download,
-  Activity
+  Activity,
+  FileText,
+  ExternalLink
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -460,8 +462,9 @@ export function DoctorDashboardClient({
                         <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
                           {selectedPatient.appointments.map((appt: any, idx: number) => {
                             const dateObj = new Date(appt.scheduled_at || appt.appointment_date)
+                            const linkedRx = selectedPatient.prescriptions?.find((r: any) => r.appointment_id === appt.id)
                             return (
-                              <div key={idx} className="border rounded-lg p-3 bg-muted/10 space-y-1 text-xs">
+                              <div key={idx} className="border rounded-lg p-3 bg-muted/10 space-y-1.5 text-xs">
                                 <div className="flex justify-between items-center">
                                   <span className="font-semibold text-[11px] text-muted-foreground">
                                     {isNaN(dateObj.getTime()) ? "Scheduled slot" : dateObj.toLocaleDateString()}
@@ -475,6 +478,20 @@ export function DoctorDashboardClient({
                                   <p className="text-[10px] text-muted-foreground bg-muted/20 p-1.5 rounded">
                                     <span className="font-semibold">Symptoms:</span> {appt.symptoms}
                                   </p>
+                                )}
+                                {linkedRx && (
+                                  <div className="pt-1.5 flex items-center justify-between border-t border-border/50 text-[10px]">
+                                    <span className="text-primary font-medium flex items-center gap-1">
+                                      <FileText className="w-3 h-3" /> Prescription Issued
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => window.open(`/prescription/${linkedRx.id}`, '_blank')}
+                                      className="text-primary hover:underline font-semibold flex items-center gap-0.5 cursor-pointer"
+                                    >
+                                      View Rx <ExternalLink className="w-2.5 h-2.5" />
+                                    </button>
+                                  </div>
                                 )}
                               </div>
                             )
@@ -492,25 +509,56 @@ export function DoctorDashboardClient({
                             selectedPatient.prescriptions.map((rx: any, idx: number) => {
                               const dateObj = new Date(rx.created_at)
                               return (
-                                <div key={idx} className="border rounded-lg p-3 bg-muted/10 space-y-1 text-xs">
+                                <div key={idx} className="border rounded-lg p-3 bg-muted/10 space-y-2 text-xs">
                                   <div className="flex justify-between items-center">
-                                    <span className="font-semibold text-[11px] text-muted-foreground">
+                                    <span className="font-semibold text-[11px] text-muted-foreground flex items-center gap-1">
+                                      <FileText className="w-3.5 h-3.5 text-primary" />
                                       {isNaN(dateObj.getTime()) ? "Issued" : dateObj.toLocaleDateString()}
                                     </span>
-                                    <Button
-                                      size="icon"
-                                      variant="ghost"
-                                      className="h-6 w-6 text-primary hover:bg-primary/10"
-                                      onClick={() => generatePrescriptionPDF({
-                                        ...rx,
-                                        doctor_name: doctorName
-                                      })}
-                                    >
-                                      <Download className="h-3 w-3" />
-                                    </Button>
+                                    <div className="flex items-center gap-1">
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-6 text-[10px] px-2 gap-1 text-primary hover:text-primary hover:bg-primary/10"
+                                        onClick={() => window.open(`/prescription/${rx.id}`, '_blank')}
+                                      >
+                                        <ExternalLink className="h-2.5 w-2.5" />
+                                        View
+                                      </Button>
+                                      <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-6 w-6 text-primary hover:bg-primary/10"
+                                        title="Download PDF"
+                                        onClick={() => {
+                                          if (rx.id) {
+                                            window.open(`/api/prescriptions/pdf?id=${rx.id}`, '_blank');
+                                          } else {
+                                            generatePrescriptionPDF({
+                                              ...rx,
+                                              doctor_name: doctorName
+                                            });
+                                          }
+                                        }}
+                                      >
+                                        <Download className="h-3 w-3" />
+                                      </Button>
+                                    </div>
                                   </div>
                                   <p className="text-foreground font-semibold">{rx.diagnosis || "General Consultation"}</p>
-                                  <p className="text-[10px] text-muted-foreground line-clamp-3">
+                                  {rx.medicines && rx.medicines.length > 0 && (
+                                    <div className="flex flex-wrap gap-1 mt-1">
+                                      {rx.medicines.map((m: any, mIdx: number) => (
+                                        <span
+                                          key={mIdx}
+                                          className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.5 rounded border border-primary/20 font-medium"
+                                        >
+                                          {m.medication_name || m.medicineName || m.name} ({m.dosage})
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                  <p className="text-[10px] text-muted-foreground line-clamp-2">
                                     {rx.advice || rx.instructions || rx.note || "No advice notes."}
                                   </p>
                                 </div>
