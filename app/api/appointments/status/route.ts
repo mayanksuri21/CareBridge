@@ -61,6 +61,11 @@ export async function POST(request: Request) {
     let dbStatus = status || 'cancelled';
     if (status === 'scheduled') {
       dbStatus = 'scheduled';
+    } else if (status === 'missed') {
+      dbStatus = 'missed';
+      if (!reasonVal.includes('[ARCHIVED_BY_DOCTOR]')) {
+        reasonVal = `${reasonVal} [ARCHIVED_BY_DOCTOR]`.trim();
+      }
     } else if (status === 'rejected' || status === 'declined' || status === 'cancelled') {
       dbStatus = 'cancelled';
     }
@@ -120,8 +125,8 @@ export async function POST(request: Request) {
     }
 
     // Release the linked schedule slot when the appointment is cancelled, declined,
-    // or completed — the slot should become bookable again.
-    if (dbStatus === 'cancelled' || dbStatus === 'completed') {
+    // completed, or missed — the slot should become bookable again.
+    if (dbStatus === 'cancelled' || dbStatus === 'completed' || dbStatus === 'missed') {
       await releaseSlot(supabase, appointmentId);
     }
 

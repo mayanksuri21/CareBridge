@@ -59,7 +59,14 @@ function playDoctorAlertChime() {
 /** Returns true if a consultation's scheduled date+time is more than 30 minutes in the past. */
 function isConsultationPast(appt: any): boolean {
   try {
-    const dStr = appt.appointment_date || appt.scheduled_date || appt.scheduled_at?.split('T')?.[0] || appt.scheduled_at?.split(' ')?.[0] || '';
+    if (appt.scheduled_at) {
+      const sDate = new Date(appt.scheduled_at);
+      if (!isNaN(sDate.getTime())) {
+        const now = new Date();
+        return now.getTime() > sDate.getTime() + 30 * 60 * 1000;
+      }
+    }
+    const dStr = appt.appointment_date || appt.scheduled_date || '';
     if (!dStr) return false;
     let parsedDate: Date | null = null;
     if (dStr.includes('-')) {
@@ -73,6 +80,8 @@ function isConsultationPast(appt: any): boolean {
       const parts = dStr.split('/');
       if (parts[2]?.length === 4) {
         parsedDate = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
+      } else if (parts[0]?.length === 4) {
+        parsedDate = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
       }
     }
     if (parsedDate && !isNaN(parsedDate.getTime())) {
@@ -98,6 +107,7 @@ function isConsultationPast(appt: any): boolean {
 
 /** Returns true if the appointment is a live/active consultation (not past, not just scheduled). */
 function isLiveConsultation(appt: any): boolean {
+  if (appt.status === 'missed' || isConsultationPast(appt)) return false;
   return appt.status === 'doctor_in_room' || appt.status === 'patient_waiting' ||
     appt.status === 'patient_admitted' || appt.status === 'in_progress' || appt.call_active;
 }
@@ -148,7 +158,7 @@ function formatAppointmentSlot(appt: any) {
 type PatientDashboardClientProps = {
   patientId: string
   patientName: string
-  patientEmail: string | null | undefined
+  patientEmail: string | null
   initialPrescriptions?: PrintablePrescription[]
   initialAppointments?: any[]
 }
@@ -162,15 +172,17 @@ export function PatientDashboardClient({
 }: PatientDashboardClientProps) {
   const router = useRouter()
   const supabase = createSupabaseBrowserClient()
-  const [symptoms, setSymptoms] = useState("")
+
+  const [appointments, setAppointments] = useState<any[]>(initialAppointments)
+  const [prescriptions, setPrescriptions] = useState<PrintablePrescription[]>(initialPrescriptions)
+  const [loadingAppointments, setLoadingAppointments] = useState(!initialAppointments.length)
+  const [loadingPrescriptions, setLoadingPrescriptions] = useState(!initialPrescriptions.length)
+
   const [primaryConcern, setPrimaryConcern] = useState("")
+  const [symptoms, setSymptoms] = useState("")
   const [bookingDoctorId, setBookingDoctorId] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted] = useState(false)
-  const [prescriptions, setPrescriptions] = useState<PrintablePrescription[]>(initialPrescriptions)
-  const [loadingPrescriptions, setLoadingPrescriptions] = useState(true)
-  const [appointments, setAppointments] = useState<any[]>(initialAppointments)
-  const [loadingAppointments, setLoadingAppointments] = useState(initialAppointments.length === 0)
 
   const [symptomLogs, setSymptomLogs] = useState<any[]>([])
 
@@ -183,19 +195,37 @@ export function PatientDashboardClient({
     }
   }, [])
 
-  const activeAppointments = filterOutPastConsultations(appointments)
-
-  const upcomingCount = activeAppointments.filter((appt) =>
-    appt.status === "scheduled" || appt.status === "confirmed" || appt.status === "booked" || appt.status === "in_progress"
+  const scheduledCount = appointments.filter((appt) =>
+    (appt.status === "scheduled" || appt.status === "confirmed" || (appt.status === "booked" && !appt.reason?.includes("[PENDING_APPROVAL]"))) &&
+    !isConsultationPast(appt) &&
+    appt.status !== "declined" &&
+    appt.status !== "cancelled" &&
+    appt.status !== "missed" &&
+    appt.status !== "completed" &&
+    !appt.reason?.includes("Declined:")
   ).length
 
-  const pendingCount = activeAppointments.filter((appt) =>
-    appt.status === "pending"
+  const pendingCount = appointments.filter((appt) =>
+    (appt.status === "pending" || (appt.status === "booked" && appt.reason?.includes("[PENDING_APPROVAL]"))) &&
+    appt.status !== "declined" &&
+    appt.status !== "cancelled"
   ).length
+
+  const completedAppointments = appointments
+    .filter((appt) => appt.status === "completed")
+    .sort((a, b) => {
+      const dateA = new Date(a.scheduled_at || a.appointment_date || a.scheduled_date || a.created_at || 0).getTime();
+      const dateB = new Date(b.scheduled_at || b.appointment_date || b.scheduled_date || b.created_at || 0).getTime();
+      return dateB - dateA;
+    });
+  const latestCompleted = completedAppointments[0];
+  const lastVisitDate = latestCompleted
+    ? formatStableDate(latestCompleted.scheduled_at || latestCompleted.appointment_date || latestCompleted.scheduled_date || latestCompleted.created_at)
+    : (prescriptions[0] ? formatStableDate(prescriptions[0].created_at) : "—");
 
   const liveAppointment = appointments.find((appt) => {
     const isDeclined = appt.status === "declined" || appt.status === "cancelled" || appt.status === "rejected" || appt.reason?.includes("Declined:");
-    if (isDeclined || appt.status === "completed") return false;
+    if (isDeclined || appt.status === "completed" || appt.status === "missed" || isConsultationPast(appt)) return false;
     if (appt.status === "scheduled" || appt.status === "booked" || appt.status === "pending" || appt.status === "confirmed") return false;
     return appt.status === "in_progress" || appt.status === "doctor_in_room" || (Boolean(appt.is_doctor_in_room) && appt.status !== "scheduled" && appt.status !== "booked" && appt.status !== "confirmed");
   })
@@ -267,23 +297,36 @@ export function PatientDashboardClient({
       list = list.map((appt: any) => {
         const reasonStr = appt.reason || '';
         const isDeclined = appt.status === 'cancelled' || appt.status === 'rejected' || appt.status === 'declined' || reasonStr.includes('Declined:') || reasonStr.includes('[PATIENT_DECLINED]');
-
-        const isDoctorInRoom = !isDeclined && (reasonStr.includes('[DOCTOR_IN_ROOM]') || Boolean(appt.is_doctor_in_room));
-        const isPatientWaiting = !isDeclined && reasonStr.includes('[PATIENT_WAITING]');
-        const isPatientAdmitted = !isDeclined && reasonStr.includes('[PATIENT_ADMITTED]');
-        const isCallActive = !isDeclined && (reasonStr.includes('[CALL_ACTIVE]') || isDoctorInRoom);
-        const isPendingApproval = reasonStr.includes('[PENDING_APPROVAL]');
+        const isCompleted = appt.status === 'completed';
 
         let cleanReason = reasonStr;
         ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]'].forEach(tag => {
           cleanReason = cleanReason.replace(` ${tag}`, '').replace(tag, '');
         });
 
+        // Parse date/time
+        const dateMatch = cleanReason.match(/Selected Date:\s*([\w\d, -]+)/i) || cleanReason.match(/Preferred Date:\s*([\w\d, -]+)/i);
+        const timeMatch = cleanReason.match(/Time Slot:\s*([\w\d: ]+)/i);
+        const parsedDate = dateMatch ? dateMatch[1].trim() : (appt.scheduled_date || appt.appointment_date || appt.scheduled_at?.split('T')?.[0] || '');
+        const parsedTime = timeMatch ? timeMatch[1].trim() : (appt.scheduled_time || appt.time_slot || '');
+
+        const isPast = isConsultationPast({ appointment_date: parsedDate, time_slot: parsedTime, scheduled_date: appt.scheduled_date, scheduled_time: appt.scheduled_time, scheduled_at: appt.scheduled_at });
+        const isMissed = appt.status === 'missed' || (isPast && !isCompleted && !isDeclined);
+
+        const isTerminated = isDeclined || isCompleted || isMissed;
+        const isDoctorInRoom = !isTerminated && (reasonStr.includes('[DOCTOR_IN_ROOM]') || Boolean(appt.is_doctor_in_room));
+        const isPatientWaiting = !isTerminated && reasonStr.includes('[PATIENT_WAITING]');
+        const isPatientAdmitted = !isTerminated && reasonStr.includes('[PATIENT_ADMITTED]');
+        const isCallActive = !isTerminated && (reasonStr.includes('[CALL_ACTIVE]') || isDoctorInRoom);
+        const isPendingApproval = reasonStr.includes('[PENDING_APPROVAL]');
+
         let statusVal = appt.status;
-        if (appt.status === 'completed') {
+        if (isCompleted) {
           statusVal = 'completed';
         } else if (isDeclined) {
           statusVal = 'declined';
+        } else if (isMissed) {
+          statusVal = 'missed';
         } else if (isPatientAdmitted) {
           statusVal = 'patient_admitted';
         } else if (isPatientWaiting) {
@@ -300,20 +343,14 @@ export function PatientDashboardClient({
           statusVal = isPendingApproval ? 'pending' : 'scheduled';
         }
 
-        // Parse date/time
-        const dateMatch = cleanReason.match(/Selected Date:\s*([\w\d, -]+)/i) || cleanReason.match(/Preferred Date:\s*([\w\d, -]+)/i);
-        const timeMatch = cleanReason.match(/Time Slot:\s*([\w\d: ]+)/i);
-        const parsedDate = dateMatch ? dateMatch[1].trim() : (appt.scheduled_date || '17-08-2026');
-        const parsedTime = timeMatch ? timeMatch[1].trim() : (appt.scheduled_time || '12:00 PM');
-
         return {
           ...appt,
           id: appt.id,
           roomId: appt.id,
           appointment_id: appt.id,
           status: statusVal,
-          is_doctor_in_room: isDoctorInRoom,
-          call_active: isCallActive,
+          is_doctor_in_room: !isTerminated && isDoctorInRoom,
+          call_active: !isTerminated && isCallActive,
           reason: cleanReason,
           appointment_date: parsedDate,
           time_slot: parsedTime,
@@ -322,7 +359,7 @@ export function PatientDashboardClient({
         };
       });
 
-      setAppointments(filterOutPastConsultations(list))
+      setAppointments(list)
     } catch (err) {
       console.error(err)
       setAppointments([])
@@ -355,30 +392,44 @@ export function PatientDashboardClient({
 
             list = list.map((appt: any) => {
               const reasonStr = appt.reason || '';
-              const isDoctorInRoom = reasonStr.includes('[DOCTOR_IN_ROOM]') || appt.is_doctor_in_room;
-              const isPatientWaiting = reasonStr.includes('[PATIENT_WAITING]');
-              const isPatientAdmitted = reasonStr.includes('[PATIENT_ADMITTED]');
-              const isPatientDeclined = reasonStr.includes('[PATIENT_DECLINED]');
-              const isCallActive = reasonStr.includes('[CALL_ACTIVE]') || isDoctorInRoom;
-              const isPendingApproval = reasonStr.includes('[PENDING_APPROVAL]');
+              const isDeclined = appt.status === 'cancelled' || appt.status === 'rejected' || appt.status === 'declined' || reasonStr.includes('Declined:') || reasonStr.includes('[PATIENT_DECLINED]');
+              const isCompleted = appt.status === 'completed';
 
               let cleanReason = reasonStr;
               ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]'].forEach(tag => {
                 cleanReason = cleanReason.replace(` ${tag}`, '').replace(tag, '');
               });
 
+              // Parse date/time
+              const dateMatch = cleanReason.match(/Selected Date:\s*([\w\d, -]+)/i) || cleanReason.match(/Preferred Date:\s*([\w\d, -]+)/i);
+              const timeMatch = cleanReason.match(/Time Slot:\s*([\w\d: ]+)/i);
+              const parsedDate = dateMatch ? dateMatch[1].trim() : (appt.scheduled_date || appt.appointment_date || appt.scheduled_at?.split('T')?.[0] || '');
+              const parsedTime = timeMatch ? timeMatch[1].trim() : (appt.scheduled_time || appt.time_slot || '');
+
+              const isPast = isConsultationPast({ appointment_date: parsedDate, time_slot: parsedTime, scheduled_date: appt.scheduled_date, scheduled_time: appt.scheduled_time, scheduled_at: appt.scheduled_at });
+              const isMissed = appt.status === 'missed' || (isPast && !isCompleted && !isDeclined);
+
+              const isTerminated = isDeclined || isCompleted || isMissed;
+              const isDoctorInRoom = !isTerminated && (reasonStr.includes('[DOCTOR_IN_ROOM]') || Boolean(appt.is_doctor_in_room));
+              const isPatientWaiting = !isTerminated && reasonStr.includes('[PATIENT_WAITING]');
+              const isPatientAdmitted = !isTerminated && reasonStr.includes('[PATIENT_ADMITTED]');
+              const isCallActive = !isTerminated && (reasonStr.includes('[CALL_ACTIVE]') || isDoctorInRoom);
+              const isPendingApproval = reasonStr.includes('[PENDING_APPROVAL]');
+
               let statusVal = appt.status;
-              if (appt.status === 'completed') {
+              if (isCompleted) {
                 statusVal = 'completed';
-              } else if (isPatientDeclined) {
+              } else if (isDeclined) {
                 statusVal = 'declined';
-              } else if (isDoctorInRoom) {
-                statusVal = 'in_progress';
+              } else if (isMissed) {
+                statusVal = 'missed';
               } else if (isPatientAdmitted) {
                 statusVal = 'patient_admitted';
               } else if (isPatientWaiting) {
                 statusVal = 'patient_waiting';
-              } else if (appt.status === 'in_progress') {
+              } else if (isDoctorInRoom) {
+                statusVal = 'doctor_in_room';
+              } else if (isCallActive || appt.status === 'in_progress') {
                 statusVal = 'in_progress';
               } else if (appt.status === 'confirmed') {
                 statusVal = 'confirmed';
@@ -388,20 +439,14 @@ export function PatientDashboardClient({
                 statusVal = isPendingApproval ? 'pending' : 'scheduled';
               }
 
-              // Parse date/time
-              const dateMatch = cleanReason.match(/Selected Date:\s*([\w\d, -]+)/i) || cleanReason.match(/Preferred Date:\s*([\w\d, -]+)/i);
-              const timeMatch = cleanReason.match(/Time Slot:\s*([\w\d: ]+)/i);
-              const parsedDate = dateMatch ? dateMatch[1].trim() : (appt.scheduled_date || '17-08-2026');
-              const parsedTime = timeMatch ? timeMatch[1].trim() : (appt.scheduled_time || '12:00 PM');
-
               return {
                 ...appt,
                 id: appt.id,
                 roomId: appt.id,
                 appointment_id: appt.id,
                 status: statusVal,
-                is_doctor_in_room: isDoctorInRoom,
-                call_active: statusVal !== 'completed' && (isDoctorInRoom || statusVal === 'in_progress' || isPatientWaiting || isPatientAdmitted),
+                is_doctor_in_room: !isTerminated && isDoctorInRoom,
+                call_active: !isTerminated && isCallActive,
                 reason: cleanReason,
                 appointment_date: parsedDate,
                 time_slot: parsedTime,
@@ -410,7 +455,7 @@ export function PatientDashboardClient({
               };
             });
 
-            setAppointments(filterOutPastConsultations(list));
+            setAppointments(list);
           }
         }
       } catch (err) {
@@ -614,7 +659,7 @@ export function PatientDashboardClient({
               <div className="absolute top-0 left-0 w-1.5 h-full bg-cyan-500/40" />
               <p className="text-xs font-medium text-slate-400">Upcoming Appointments</p>
               <p className="mt-2 text-3xl font-extrabold tracking-tight text-white group-hover:scale-105 transition-transform origin-left">
-                {upcomingCount} <span className="text-sm font-medium text-slate-400">Scheduled</span>
+                {scheduledCount} <span className="text-sm font-medium text-slate-400">Scheduled</span>
                 <span className="text-sm font-medium text-slate-400 ml-2">|</span>
                 <span className="text-sm font-medium text-amber-400 ml-2">{pendingCount} Pending</span>
               </p>
@@ -623,9 +668,7 @@ export function PatientDashboardClient({
               <div className="absolute top-0 left-0 w-1.5 h-full bg-violet-500/40" />
               <p className="text-xs font-medium text-slate-400">Last Visit</p>
               <p className="mt-2 text-3xl font-extrabold tracking-tight text-white group-hover:scale-105 transition-transform origin-left" suppressHydrationWarning>
-                {prescriptions[0]
-                  ? formatStableDate(prescriptions[0].created_at)
-                  : "—"}
+                {lastVisitDate}
               </p>
             </div>
           </div>

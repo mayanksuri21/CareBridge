@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import {
   Mic, MicOff, Video, VideoOff, PhoneOff, User, Activity, Loader2,
   Check, X, LogOut, ShieldAlert, FileText, Plus, Trash, AlertCircle,
-  Clock, Calendar, Sparkles, Edit3, ExternalLink
+  Clock, Calendar, Sparkles, Edit3, ExternalLink, XCircle
 } from 'lucide-react';
 import Link from 'next/link';
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -425,7 +425,7 @@ export default function ConsultationRoom() {
       isFetchingTokenRef.current = false;
     }
 
-    if (!appointment || token || appointment.status === 'completed') return;
+    if (!appointment || token || appointment.status === 'completed' || appointment.status === 'missed') return;
     if (isFetchingTokenRef.current || tokenFetchFailedRef.current) return;
 
     // CRITICAL: Do NOT request token while auth is still INITIAL_SESSION / no session
@@ -493,7 +493,7 @@ export default function ConsultationRoom() {
 
   // 5. Camera & Microphone Media Stream Initialization (Single Hardware Access)
   useEffect(() => {
-    if (!showCallView) return;
+    if (!showCallView || appointment?.status === 'completed' || appointment?.status === 'missed') return;
 
     let activeStream: MediaStream | null = null;
     let isCancelled = false;
@@ -1485,26 +1485,33 @@ export default function ConsultationRoom() {
   const isPendingStatus = apptStatus === 'pending';
   const isDeclinedStatus = apptStatus === 'declined' || apptStatus === 'cancelled' || apptStatus === 'rejected';
   const isCompletedStatus = apptStatus === 'completed';
+  const isMissedStatus = apptStatus === 'missed';
   const backLink = isDoctor ? '/doctor/dashboard' : '/patient/dashboard';
   const backLabel = isDoctor ? 'Back to Doctor Dashboard' : 'Back to Patient Dashboard';
 
-  // Access Guard on Rejoin: If consultation already completed/concluded, block rejoining
-  if (isCompletedStatus) {
+  // Access Guard on Ended / Missed Session: If consultation already completed/concluded or marked as missed, block joining
+  if (isCompletedStatus || isMissedStatus) {
     return (
       <div className="min-h-screen bg-[#070b14] text-white flex flex-col items-center justify-center font-sans p-6 text-center">
         <div className="max-w-md w-full bg-slate-900/60 border border-slate-800 rounded-3xl p-8 backdrop-blur-md shadow-2xl space-y-4">
-          <div className="w-14 h-14 rounded-full bg-emerald-500/10 border border-emerald-500/40 flex items-center justify-center mx-auto">
-            <Check className="w-7 h-7 text-emerald-400" />
+          <div className={`w-14 h-14 rounded-full ${isMissedStatus ? 'bg-red-500/10 border border-red-500/40' : 'bg-emerald-500/10 border border-emerald-500/40'} flex items-center justify-center mx-auto`}>
+            {isMissedStatus ? (
+              <XCircle className="w-7 h-7 text-red-400" />
+            ) : (
+              <Check className="w-7 h-7 text-emerald-400" />
+            )}
           </div>
-          <h2 className="text-xl font-bold text-white">Consultation Ended</h2>
+          <h2 className="text-xl font-bold text-white">
+            {isMissedStatus ? "Consultation Missed" : "Consultation Ended"}
+          </h2>
           <p className="text-xs text-slate-400">
-            This consultation has ended. Rejoin is not permitted.
+            This consultation session has ended or was marked as missed.
           </p>
           <Link
             href={backLink}
             className="mt-6 inline-block w-full py-3 bg-slate-800 hover:bg-slate-700 text-xs font-bold rounded-xl transition border border-slate-700 text-white text-center cursor-pointer"
           >
-            {backLabel}
+            Return to Dashboard
           </Link>
         </div>
       </div>

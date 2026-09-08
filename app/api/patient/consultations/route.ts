@@ -20,15 +20,22 @@ export async function GET(request: Request) {
     const formatted = (data || []).map((appt: any) => {
       const reasonStr = appt.reason || '';
       const isDeclined = appt.status === 'cancelled' || appt.status === 'rejected' || appt.status === 'declined' || reasonStr.includes('Declined:') || reasonStr.includes('[PATIENT_DECLINED]');
+      const isCompleted = appt.status === 'completed';
+      const isMissed = appt.status === 'missed';
+      const isTerminated = isDeclined || isCompleted || isMissed;
 
-      const isDoctorInRoom = !isDeclined && reasonStr.includes('[DOCTOR_IN_ROOM]');
-      const isPatientWaiting = !isDeclined && reasonStr.includes('[PATIENT_WAITING]');
-      const isPatientAdmitted = !isDeclined && reasonStr.includes('[PATIENT_ADMITTED]');
-      const isCallActive = !isDeclined && (reasonStr.includes('[CALL_ACTIVE]') || isDoctorInRoom);
+      const isDoctorInRoom = !isTerminated && reasonStr.includes('[DOCTOR_IN_ROOM]');
+      const isPatientWaiting = !isTerminated && reasonStr.includes('[PATIENT_WAITING]');
+      const isPatientAdmitted = !isTerminated && reasonStr.includes('[PATIENT_ADMITTED]');
+      const isCallActive = !isTerminated && (reasonStr.includes('[CALL_ACTIVE]') || isDoctorInRoom);
 
       let statusVal = appt.status;
       if (isDeclined) {
         statusVal = 'declined';
+      } else if (isCompleted) {
+        statusVal = 'completed';
+      } else if (isMissed) {
+        statusVal = 'missed';
       } else if (isDoctorInRoom || isCallActive) {
         statusVal = 'in_progress';
       }

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { Calendar, Clock, Video, RefreshCw, MessageSquare, AlertCircle, CheckCircle2, XCircle, FileText, Loader2, CalendarCheck } from "lucide-react";
+import { Calendar, Clock, Video, RefreshCw, MessageSquare, AlertCircle, CheckCircle2, XCircle, FileText, Loader2, CalendarCheck, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -149,7 +149,9 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
         (a: any) =>
           a.status !== "declined" &&
           a.status !== "cancelled" &&
+          a.status !== "missed" &&
           !a.reason?.includes("Declined:") &&
+          !a.reason?.includes("[ARCHIVED_BY_DOCTOR]") &&
           (a.status === "scheduled" ||
             a.status === "doctor_in_room" || a.status === "patient_waiting" ||
             a.status === "patient_admitted" || a.status === "in_progress")
@@ -297,6 +299,34 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
       console.error("Failed to signal doctor start:", e);
     }
     window.location.href = `/consultation/${appointmentId}`;
+  };
+
+  const handleRemoveMissed = async (appointmentId: string) => {
+    setWorkingId(appointmentId);
+    try {
+      const res = await fetch("/api/appointments/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          appointment_id: appointmentId,
+          status: "missed",
+          archived_by_doctor: true,
+        }),
+      });
+
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload.error || "Failed to remove missed consultation");
+      }
+
+      toast.success("Missed consultation removed from queue.");
+      setConfirmedConsultations((prev) => prev.filter((a) => a.id !== appointmentId));
+    } catch (err: any) {
+      console.error("Remove missed consultation error:", err);
+      toast.error(err.message || "Could not remove consultation. Please try again.");
+    } finally {
+      setWorkingId(null);
+    }
   };
 
   return (
@@ -492,20 +522,22 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
                         <Video className="w-4 h-4" /> {req.status === 'in_progress' || req.is_doctor_in_room || req.reason?.includes('[DOCTOR_IN_ROOM]') ? "Rejoin Consultation" : "Start Consultation"}
                       </Button>
                     )}
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      onClick={() => handleDeclineClick(req.id)}
-                      disabled={isWorking}
-                      className="gap-1.5 bg-red-650 hover:bg-red-600 text-white rounded-xl font-medium"
-                    >
-                      {isWorking ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <XCircle className="w-4 h-4" />
-                      )}
-                      {isWorking ? 'Declining...' : 'Decline'}
-                    </Button>
+                    {isPast && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleRemoveMissed(req.id)}
+                        disabled={isWorking}
+                        className="gap-1.5 border-slate-700 hover:bg-slate-800 text-slate-300 hover:text-white rounded-xl font-medium"
+                      >
+                        {isWorking ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-4 h-4 text-slate-400" />
+                        )}
+                        {isWorking ? 'Removing...' : 'Remove'}
+                      </Button>
+                    )}
                   </div>
                 </div>
               );

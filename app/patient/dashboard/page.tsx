@@ -110,11 +110,59 @@ export default async function PatientDashboardPage() {
     })
   }
 
+function isConsultationPast(appt: { appointment_date?: string; time_slot?: string; scheduled_date?: string; scheduled_time?: string; scheduled_at?: string }): boolean {
+  try {
+    if (appt.scheduled_at) {
+      const sDate = new Date(appt.scheduled_at);
+      if (!isNaN(sDate.getTime())) {
+        const now = new Date();
+        return now.getTime() > sDate.getTime() + 30 * 60 * 1000;
+      }
+    }
+    const dStr = appt.appointment_date || appt.scheduled_date || '';
+    if (!dStr) return false;
+    let parsedDate: Date | null = null;
+    if (dStr.includes('-')) {
+      const parts = dStr.split('-');
+      if (parts[0].length === 4) {
+        parsedDate = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+      } else {
+        parsedDate = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
+      }
+    } else if (dStr.includes('/')) {
+      const parts = dStr.split('/');
+      if (parts[2]?.length === 4) {
+        parsedDate = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
+      } else if (parts[0]?.length === 4) {
+        parsedDate = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+      }
+    }
+    if (parsedDate && !isNaN(parsedDate.getTime())) {
+      const tStr = appt.time_slot || appt.scheduled_time || '';
+      let hours = 12, minutes = 0;
+      if (tStr) {
+        const timeParts = tStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
+        if (timeParts) {
+          hours = parseInt(timeParts[1], 10);
+          minutes = parseInt(timeParts[2], 10);
+          const ampm = timeParts[3].toUpperCase();
+          if (ampm === 'PM' && hours < 12) hours += 12;
+          if (ampm === 'AM' && hours === 12) hours = 0;
+        }
+      }
+      const scheduledDateTime = new Date(parsedDate.getFullYear(), parsedDate.getMonth(), parsedDate.getDate(), hours, minutes, 0, 0);
+      const now = new Date();
+      return now.getTime() > scheduledDateTime.getTime() + 30 * 60 * 1000;
+    }
+  } catch { }
+  return false;
+}
+
   const { data: patientAppts } = await supabaseAdmin
     .from("appointments")
-    .select("id, doctor_id, slot_id, status, reason, created_at")
+    .select("id, doctor_id, slot_id, status, reason, created_at, appointment_date, time_slot, scheduled_at")
     .eq("patient_id", user.id)
-    .in("status", ["scheduled", "pending", "booked", "confirmed", "declined", "cancelled", "in_progress", "completed"])
+    .in("status", ["scheduled", "pending", "booked", "confirmed", "declined", "cancelled", "in_progress", "completed", "missed"])
     .order("created_at", { ascending: false })
 
   let initialApptsMapped: any[] = []
@@ -154,13 +202,24 @@ export default async function PatientDashboardPage() {
       })
       cleanReason = cleanReason.trim()
       
-      const parsedDate = dateMatch ? dateMatch[1].trim() : '2026-08-17'
-      const parsedTime = timeMatch ? timeMatch[1].trim() : '02:00 PM'
+      const parsedDate = dateMatch ? dateMatch[1].trim() : (apt.appointment_date || apt.scheduled_at?.split('T')?.[0] || '')
+      const parsedTime = timeMatch ? timeMatch[1].trim() : (apt.time_slot || '12:00 PM')
       const parsedSymptoms = symptomsMatch ? symptomsMatch[1].trim() : ''
+
+      const isPast = isConsultationPast({
+        appointment_date: parsedDate,
+        time_slot: parsedTime,
+        scheduled_at: apt.scheduled_at,
+        scheduled_date: apt.appointment_date,
+        scheduled_time: apt.time_slot
+      })
+      const isMissed = apt.status === 'missed' || (isPast && apt.status !== 'completed' && apt.status !== 'declined' && apt.status !== 'cancelled')
 
       let statusVal = apt.status || 'scheduled'
       if (apt.status === 'completed') {
         statusVal = 'completed'
+      } else if (isMissed) {
+        statusVal = 'missed'
       } else if (isPatientAdmitted) {
         statusVal = 'patient_admitted'
       } else if (isPatientWaiting) {
@@ -175,6 +234,8 @@ export default async function PatientDashboardPage() {
         statusVal = isPendingApproval ? 'pending' : 'scheduled'
       }
 
+      const isLiveValid = !isMissed && statusVal !== 'completed' && statusVal !== 'declined' && statusVal !== 'cancelled'
+
       return {
         id: apt.id,
         roomId: apt.id,
@@ -186,12 +247,13 @@ export default async function PatientDashboardPage() {
           specialty: doc.specialty || 'General Medicine',
           email: doc.email || ''
         },
-        appointment_date: parsedDate,
-        time_slot: parsedTime,
+        appointment_date: parsedDate || apt.appointment_date,
+        time_slot: parsedTime || apt.time_slot,
+        scheduled_at: apt.scheduled_at,
         symptoms: parsedSymptoms,
         status: statusVal,
-        is_doctor_in_room: isDoctorInRoom,
-        call_active: statusVal !== 'completed' && (isDoctorInRoom || statusVal === 'in_progress' || isPatientWaiting || isPatientAdmitted),
+        is_doctor_in_room: isLiveValid && isDoctorInRoom,
+        call_active: isLiveValid && (isDoctorInRoom || statusVal === 'in_progress' || isPatientWaiting || isPatientAdmitted),
         reason: cleanReason || 'General Consultation',
         raw_reason: reasonStr,
         created_at: apt.created_at
