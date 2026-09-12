@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Heart, Stethoscope, User as UserIcon, X } from "lucide-react"
 import { createInitialProfile, completeOnboarding } from "@/lib/supabase/onboarding-utils"
 import { useToast } from "@/hooks/use-toast"
+import { calculateAge } from "@/lib/utils"
 import type { User } from "@supabase/supabase-js"
 
 interface OnboardingFormProps {
@@ -20,9 +21,13 @@ interface OnboardingFormProps {
 
 export function OnboardingForm({ user, onComplete }: OnboardingFormProps) {
   const [loading, setLoading] = useState(false)
+  const initialDob = user.user_metadata?.date_of_birth || user.user_metadata?.dob || ""
   const [formData, setFormData] = useState({
     name: user.user_metadata?.full_name || user.user_metadata?.name || "",
     phone: user.user_metadata?.phone_number || "",
+    date_of_birth: initialDob,
+    age: initialDob ? String(calculateAge(initialDob) ?? "") : (user.user_metadata?.age ? String(user.user_metadata.age) : ""),
+    gender: user.user_metadata?.gender || "",
     role: "patient" as "patient" | "doctor",
     address: "",
     specialty: ""
@@ -72,6 +77,8 @@ export function OnboardingForm({ user, onComplete }: OnboardingFormProps) {
         return
       }
 
+      const calculatedAge = formData.date_of_birth ? calculateAge(formData.date_of_birth) : (formData.age ? Number(formData.age) : null);
+
       console.log('Starting onboarding process with data:', { ...formData, userId: user.id })
 
       await createInitialProfile(user, {
@@ -79,13 +86,16 @@ export function OnboardingForm({ user, onComplete }: OnboardingFormProps) {
         phone: formData.phone.trim(),
         role: formData.role,
         address: formData.address?.trim() || '',
-        specialty: formData.specialty?.trim() || ''
+        specialty: formData.specialty?.trim() || '',
+        date_of_birth: formData.date_of_birth || undefined,
+        age: calculatedAge ?? undefined,
+        gender: formData.gender || undefined
       })
 
       console.log('Initial profile created, completing onboarding...')
 
       await completeOnboarding(user.id)
-      
+
       console.log('Profile setup completed successfully')
 
       toast({
@@ -98,9 +108,9 @@ export function OnboardingForm({ user, onComplete }: OnboardingFormProps) {
       router.push('/profile')
     } catch (error) {
       console.error('Onboarding failed:', error)
-      
+
       let errorMessage = "There was an error setting up your profile. Please try again."
-      
+
       if (error instanceof Error) {
         errorMessage = error.message
       } else if (typeof error === 'object' && error !== null && 'message' in error) {
@@ -108,7 +118,7 @@ export function OnboardingForm({ user, onComplete }: OnboardingFormProps) {
       }
 
       toast({
-        title: "Setup Failed", 
+        title: "Setup Failed",
         description: errorMessage,
         variant: "destructive",
         duration: 5000
@@ -157,7 +167,7 @@ export function OnboardingForm({ user, onComplete }: OnboardingFormProps) {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
-            
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="name">Full Name *</Label>
@@ -180,6 +190,47 @@ export function OnboardingForm({ user, onComplete }: OnboardingFormProps) {
                   placeholder="+1 (555) 000-0000"
                   required
                 />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="dob">Date of Birth</Label>
+                  {formData.date_of_birth && calculateAge(formData.date_of_birth) !== null && (
+                    <span className="text-xs text-primary font-semibold">
+                      Age: {calculateAge(formData.date_of_birth)} yrs
+                    </span>
+                  )}
+                </div>
+                <Input
+                  id="dob"
+                  type="date"
+                  value={formData.date_of_birth}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    handleChange("date_of_birth", val);
+                    const ageCalc = calculateAge(val);
+                    if (ageCalc !== null) {
+                      handleChange("age", String(ageCalc));
+                    }
+                  }}
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label htmlFor="gender">Gender</Label>
+                <Select value={formData.gender} onValueChange={(value) => handleChange("gender", value)}>
+                  <SelectTrigger id="gender" className="mt-1">
+                    <SelectValue placeholder="Select gender" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Male">Male</SelectItem>
+                    <SelectItem value="Female">Female</SelectItem>
+                    <SelectItem value="Other">Other</SelectItem>
+                    <SelectItem value="Prefer not to say">Prefer not to say</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
@@ -232,19 +283,19 @@ export function OnboardingForm({ user, onComplete }: OnboardingFormProps) {
             </div>
 
             <div className="flex gap-3 pt-4">
-              <Button 
+              <Button
                 type="button"
                 variant="outline"
-                className="flex-1" 
+                className="flex-1"
                 onClick={handleCancel}
                 disabled={loading}
               >
                 Skip for Now
               </Button>
-              <Button 
-                type="submit" 
-                className="flex-1" 
-                size="lg" 
+              <Button
+                type="submit"
+                className="flex-1"
+                size="lg"
                 disabled={loading}
               >
                 {loading ? "Setting up your profile..." : "Complete Setup"}

@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import { calculateAge } from "@/lib/utils"
 
 type TriggerVariant = "default" | "destructive" | "outline" | "secondary" | "ghost" | "link"
 type TriggerSize = "default" | "sm" | "lg" | "icon"
@@ -70,30 +71,45 @@ export function PrescriptionModal({
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
 
-  const [patientDetails, setPatientDetails] = useState<{ age: string | number; gender: string } | null>(null);
+  const [patientDetails, setPatientDetails] = useState<{ name?: string; age: string | number; gender: string } | null>(null);
   const [resolvedDoctorName, setResolvedDoctorName] = useState<string>("");
 
   useEffect(() => {
     if (open) {
       setChiefComplaint(initialChiefComplaint ?? "")
-      
+
       const fetchDetails = async () => {
         try {
           const { createSupabaseBrowserClient } = await import("@/lib/supabase/client");
           const supabase = createSupabaseBrowserClient();
-          
-          const targetPatientId = patientId || directPatientId;
+
+          let targetPatientId = patientId || directPatientId;
+          if (!targetPatientId && appointmentId) {
+            const { data: appt } = await supabase
+              .from("appointments")
+              .select("patient_id")
+              .eq("id", appointmentId)
+              .maybeSingle();
+            if (appt?.patient_id) {
+              targetPatientId = appt.patient_id;
+            }
+          }
+
           if (targetPatientId) {
             const { data } = await supabase
               .from("profiles")
-              .select("age, gender")
+              .select("name")
               .eq("id", targetPatientId)
               .maybeSingle();
             if (data) {
-              setPatientDetails({ age: data.age ?? "", gender: data.gender ?? "" });
+              setPatientDetails({
+                name: data.name,
+                age: "",
+                gender: ""
+              });
             }
           }
-          
+
           if (doctorId) {
             const { data } = await supabase
               .from("profiles")
@@ -108,10 +124,10 @@ export function PrescriptionModal({
           console.error("Error fetching dynamic details:", e);
         }
       };
-      
+
       void fetchDetails();
     }
-  }, [open, initialChiefComplaint, patientId, directPatientId, doctorId]);
+  }, [open, initialChiefComplaint, patientId, directPatientId, doctorId, appointmentId]);
 
   function updateMedicine(index: number, field: keyof Medicine, value: string) {
     setMedicines((currentMedicines) =>
@@ -131,7 +147,7 @@ export function PrescriptionModal({
       return false
     }
 
-    const patientLabel = patientName ?? "Demo patient"
+    const patientLabel = patientDetails?.name || patientName || ""
     const issuedDate = new Intl.DateTimeFormat("en-IN", {
       day: "2-digit",
       month: "short",
@@ -142,7 +158,7 @@ export function PrescriptionModal({
       .filter((medicine) => medicine.medicineName.trim())
       .map((medicine) => `<tr><td>${escapeHtml(medicine.medicineName)}</td><td>${escapeHtml(medicine.dosage || "-")}</td><td>${escapeHtml(medicine.frequency || "-")}</td><td>${escapeHtml(medicine.duration || "-")}</td></tr>`)
       .join("")
-      
+
     const docName = resolvedDoctorName || "Rahul Sharma"
     const doctorLabel = docName.startsWith("Dr. ") ? docName : `Dr. ${docName}`
     const ageLabel = patientDetails?.age ? `${patientDetails.age} yrs` : "N/A"
@@ -228,6 +244,7 @@ export function PrescriptionModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           appointmentId,
+          doctorId,
           patientId: prescriptionPatientId,
           diagnosis: chiefComplaint,
           advice,
@@ -241,7 +258,7 @@ export function PrescriptionModal({
       })
       if (!response.ok) throw new Error("Prescription persistence is unavailable")
     } catch (error) {
-      console.warn("DB insert bypassed for demo session:", error)
+      console.warn("Prescription API call error:", error)
     }
 
     openPrintablePrescription(printableWindow)
@@ -264,7 +281,7 @@ export function PrescriptionModal({
           <DialogHeader>
             <DialogTitle>Create Prescription</DialogTitle>
             <DialogDescription>
-            Save the prescription and open a printable PDF.
+              Save the prescription and open a printable PDF.
             </DialogDescription>
           </DialogHeader>
 

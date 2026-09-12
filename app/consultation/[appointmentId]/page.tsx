@@ -12,6 +12,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useAuth } from "@/components/auth-provider";
 import { toast } from "sonner";
 import { Room, RoomEvent, Track } from "livekit-client";
+import { calculateAge } from "@/lib/utils";
 
 type MedicineInput = {
   name: string;
@@ -33,17 +34,24 @@ export default function ConsultationRoom() {
 
   // Robust appointment ID extraction across Next.js App Router param variants
   const rawAppointmentId = (params?.appointmentId || params?.id) as string | string[] | undefined;
-  // Fail-safe appointment ID extraction
+  // Fail-safe appointment ID extraction with ID sanitization
   const appointmentId = useMemo(() => {
     const raw = (params?.appointmentId || params?.id) as any;
-    if (typeof raw === 'string' && raw) return raw;
-    if (Array.isArray(raw) && raw[0]) return raw[0];
-    if (typeof window !== 'undefined') {
+    let val = '';
+    if (typeof raw === 'string' && raw) val = raw;
+    else if (Array.isArray(raw) && raw[0]) val = raw[0];
+    else if (typeof window !== 'undefined') {
       const parts = window.location.pathname.split('/');
       const lastPart = parts[parts.length - 1];
-      if (lastPart && lastPart !== 'consultation') return lastPart;
+      if (lastPart && lastPart !== 'consultation') val = lastPart;
     }
-    return '';
+    if (val) {
+      try {
+        val = decodeURIComponent(val);
+      } catch (_) {}
+      val = val.trim().replace(/\s+/g, '-');
+    }
+    return val;
   }, [params]);
 
   const roomId = appointmentId || (typeof window !== 'undefined' ? window.location.pathname.split('/').filter(Boolean).pop() || '' : '');
@@ -77,6 +85,7 @@ export default function ConsultationRoom() {
   // WebRTC Tracks States
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [hasRemoteVideo, setHasRemoteVideo] = useState(false);
+  const [hasRemoteParticipant, setHasRemoteParticipant] = useState(false);
 
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
@@ -160,16 +169,7 @@ export default function ConsultationRoom() {
     };
   }, []);
 
-  // 1. Fetch current user and profile role with AuthProvider sync
-  useEffect(() => {
-    if (authUser) {
-      setCurrentUser(authUser);
-      if (authUser.user_metadata?.role === 'doctor') {
-        setUserRole('doctor');
-      }
-    }
-  }, [authUser]);
-
+  // 1. Fetch current user and profile role directly from profiles table (single source of truth)
   useEffect(() => {
     async function fetchUserAndRole() {
       try {
@@ -177,24 +177,14 @@ export default function ConsultationRoom() {
         if (user) {
           setCurrentUser(user);
 
-          // Authoritative profile role query
+          // Authoritative profile role query from DB (profiles.role)
           const { data: profile } = await supabase
             .from("profiles")
             .select("role")
             .eq("id", user.id)
             .maybeSingle();
 
-          let role = profile?.role || (user.user_metadata?.role as string) || null;
-
-          if (role !== 'doctor') {
-            const { data: docApp } = await supabase
-              .from("doctor_verification_applications")
-              .select("status")
-              .eq("doctor_id", user.id)
-              .maybeSingle();
-            if (docApp) role = 'doctor';
-          }
-          setUserRole(role);
+          setUserRole(profile?.role || null);
         }
       } catch (err) {
         console.warn("Could not fetch user/role in consultation room:", err);
@@ -218,7 +208,12 @@ export default function ConsultationRoom() {
 
   // 2. Fetch appointment data with Supabase join and robust API fallbacks
   const loadAppointment = useCallback(async (retryCount = 0) => {
-    const effectiveId = appointmentId || (typeof window !== 'undefined' ? window.location.pathname.split('/').filter(Boolean).pop() : '');
+    let rawId = appointmentId || (typeof window !== 'undefined' ? window.location.pathname.split('/').filter(Boolean).pop() : '') || '';
+    if (rawId) {
+      try { rawId = decodeURIComponent(rawId); } catch (_) {}
+      rawId = rawId.trim().replace(/\s+/g, '-');
+    }
+    const effectiveId = rawId;
 
     if (!effectiveId || effectiveId === 'consultation') {
       if (retryCount < 5) {
@@ -234,8 +229,12 @@ export default function ConsultationRoom() {
 
       // 1. PRIMARY: Query service role admin API first (Bypasses Supabase RLS for Patient)
       try {
+        const accessToken = authSession?.access_token;
         const apiRes = await fetch(`/api/appointments/call?appointment_id=${effectiveId}`, {
-          cache: 'no-store'
+          cache: 'no-store',
+          headers: {
+            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
+          }
         });
         if (apiRes.ok) {
           const apiJson = await apiRes.json();
@@ -267,8 +266,12 @@ export default function ConsultationRoom() {
       // 3. TERTIARY: Details API fallback
       if (!apptData) {
         try {
+          const accessToken = authSession?.access_token;
           const detRes = await fetch(`/api/appointments/details?id=${effectiveId}`, {
-            cache: 'no-store'
+            cache: 'no-store',
+            headers: {
+              ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
+            }
           });
           if (detRes.ok) {
             const detJson = await detRes.json();
@@ -283,6 +286,24 @@ export default function ConsultationRoom() {
 
       // Apply fetched appointment data
       if (apptData) {
+        if (apptData.patient_id && (!apptData.patient || !apptData.patient.name)) {
+          try {
+            const { data: prof } = await supabase
+              .from('profiles')
+              .select('name, email, phone')
+              .eq('id', apptData.patient_id)
+              .maybeSingle();
+            if (prof) {
+              apptData.patient = {
+                ...(apptData.patient || {}),
+                ...prof,
+              };
+            }
+          } catch (pErr) {
+            console.warn("Could not load patient profile:", pErr);
+          }
+        }
+
         const normalized = typeof normalizeAppointment === 'function' ? normalizeAppointment(apptData) : apptData;
         setAppointment((prev: any) => ({ ...prev, ...normalized }));
 
@@ -313,10 +334,12 @@ export default function ConsultationRoom() {
         setLoadingAppt(false);
       }
     }
-  }, [appointmentId, supabase, normalizeAppointment]);
+  }, [appointmentId, supabase, normalizeAppointment, authSession]);
 
   // 3. Polling fallback + Realtime listener to sync state changes immediately
   useEffect(() => {
+    if (authLoading) return;
+
     loadAppointment(0);
     const interval = setInterval(() => loadAppointment(0), 3000);
 
@@ -340,46 +363,22 @@ export default function ConsultationRoom() {
       clearInterval(interval);
       void supabase.removeChannel(channel);
     };
-  }, [appointmentId, supabase, loadAppointment]);
+  }, [appointmentId, supabase, loadAppointment, authLoading]);
 
-  // Determine user role and call view eligibility
+  // Single authoritative role determination: profiles.role & appointment matching
   const isDoctorById = Boolean(
     currentUser &&
     appointment &&
-    (
-      (appointment.doctor_id && currentUser.id === appointment.doctor_id) ||
-      (appointment.doctor?.email && currentUser.email === appointment.doctor.email)
-    )
+    appointment.doctor_id &&
+    currentUser.id === appointment.doctor_id
   );
-  const hasUserSession = Boolean(currentUser || authUser);
-  const isDoctorRole =
-    userRole === 'doctor' ||
-    currentUser?.user_metadata?.role === 'doctor' ||
-    currentUser?.role === 'doctor' ||
-    authUser?.user_metadata?.role === 'doctor' ||
-    (typeof window !== 'undefined' && hasUserSession && (
-      document.referrer.includes('/doctor') ||
-      window.location.search.includes('role=doctor') ||
-      window.location.pathname.includes('/doctor')
-    ));
-
-  // The logged-in user is a Doctor if their ID matches appointment.doctor_id OR their profile/metadata role is 'doctor'
+  const isDoctorRole = userRole === 'doctor';
   const isDoctor = Boolean(isDoctorById || isDoctorRole);
+  const isPatient = !isDoctor;
 
-  // The user is ONLY a Patient if they are NOT a doctor
-  const isPatientById = Boolean(
-    currentUser &&
-    appointment &&
-    appointment.patient_id &&
-    currentUser.id === appointment.patient_id
-  );
-  const isPatientRole = userRole === 'patient' || currentUser?.user_metadata?.role === 'patient';
-  const isPatient = !isDoctor && Boolean(isPatientById || isPatientRole);
-  // Safe Debug Log (Placed after both isDoctor and isPatient are declared)
   console.log("DEBUG ROLES:", {
     currentUserId: currentUser?.id,
     currentUserRole: userRole,
-    currentUserMetaRole: currentUser?.user_metadata?.role,
     appointmentDoctorId: appointment?.doctor_id,
     appointmentPatientId: appointment?.patient_id,
     isDoctor,
@@ -405,11 +404,7 @@ export default function ConsultationRoom() {
   const showCallView = isDoctor || (isPatient && isAdmittedOrActive && patientJoinClicked);
 
   // Auto-set patientJoinClicked if patient rejoins an in-progress consultation
-  useEffect(() => {
-    if (isPatient && (appointment?.status === 'in_progress' || appointment?.is_patient_admitted) && !patientJoinClicked) {
-      setPatientJoinClicked(true);
-    }
-  }, [isPatient, appointment?.status, appointment?.is_patient_admitted, patientJoinClicked]);
+
 
   // 4. Fetch LiveKit Token for authorized users (Controlled, single fetch, no infinite loop)
   useEffect(() => {
@@ -435,14 +430,8 @@ export default function ConsultationRoom() {
       return;
     }
 
-    const isAdmittedOrActive = Boolean(
-      appointment?.is_patient_admitted ||
-      appointment?.status === 'in_progress' ||
-      appointment?.status === 'scheduled'
-    );
-
-    const shouldConnect = Boolean(isDoctor || isAdmittedOrActive || showCallView || patientJoinClicked);
-    if (!shouldConnect) return;
+    const shouldFetchToken = Boolean(isDoctor || (isPatient && patientJoinClicked));
+    if (!shouldFetchToken) return;
 
     isFetchingTokenRef.current = true;
     console.log("[LiveKit] Joining exact room:", exactRoomId);
@@ -466,9 +455,13 @@ export default function ConsultationRoom() {
           const errJson = await res.json().catch(() => ({}));
           const errorMsg = errJson.error || `HTTP ${res.status}`;
           if (res.status === 401 || res.status === 403) {
-            tokenFetchFailedRef.current = true;
-            console.error("[LiveKit] Token auth error (stopping retries):", errorMsg);
+            console.error("[LiveKit] Token auth error:", errorMsg);
+
+            // 401 means the authentication session is invalid.
+            // 403 may only mean the patient is not admitted yet,
+            // so it must remain retryable.
             if (res.status === 401) {
+              tokenFetchFailedRef.current = true;
               toast.error("Authentication session expired. Please log in again.");
             }
           }
@@ -660,7 +653,7 @@ export default function ConsultationRoom() {
             playPromise.catch((err: any) => {
               console.warn("[WebRTC] Remote audio autoplay blocked by browser policy, waiting for user interaction:", err);
               const resumeAudio = () => {
-                audioEl.play().catch(() => {});
+                audioEl.play().catch(() => { });
                 window.removeEventListener('click', resumeAudio);
                 window.removeEventListener('keydown', resumeAudio);
               };
@@ -677,8 +670,15 @@ export default function ConsultationRoom() {
     // Scan all remote participants and attach tracks
     const syncRemoteTracks = (targetRoom?: Room) => {
       const activeRoom = targetRoom || roomRef.current;
-      if (!activeRoom) return;
+      if (!activeRoom) {
+        setHasRemoteVideo(false);
+        setHasRemoteParticipant(false);
+        return;
+      }
       let foundVideo = false;
+      const count = activeRoom.remoteParticipants ? activeRoom.remoteParticipants.size : 0;
+      setHasRemoteParticipant(count > 0);
+
       activeRoom.remoteParticipants.forEach((participant) => {
         console.log("[WebRTC] [Sync] Scanning remote participant:", participant.identity);
         participant.trackPublications.forEach((pub: any) => {
@@ -690,19 +690,19 @@ export default function ConsultationRoom() {
           }
         });
       });
-      if (foundVideo) {
-        setHasRemoteVideo(true);
-      }
+      setHasRemoteVideo(foundVideo);
     };
 
     // Check if any active remote video tracks remain before clearing display
     const checkRemainingRemoteVideo = () => {
       const activeRoom = roomRef.current;
-      if (!activeRoom) {
+      if (!activeRoom || !activeRoom.remoteParticipants || activeRoom.remoteParticipants.size === 0) {
         setHasRemoteVideo(false);
+        setHasRemoteParticipant(false);
         return;
       }
       let hasActiveVideo = false;
+      setHasRemoteParticipant(activeRoom.remoteParticipants.size > 0);
       activeRoom.remoteParticipants.forEach((p) => {
         p.trackPublications.forEach((pub: any) => {
           if (pub.kind === 'video' && pub.isSubscribed && pub.track && !pub.isMuted) {
@@ -755,6 +755,7 @@ export default function ConsultationRoom() {
 
     const onParticipantConnected = (participant: any) => {
       console.log("[WebRTC] [ParticipantConnected]:", participant?.identity);
+      setHasRemoteParticipant(true);
       syncRemoteTracks();
     };
 
@@ -780,6 +781,8 @@ export default function ConsultationRoom() {
     async function connectRoom() {
       const livekitUrl = process.env.NEXT_PUBLIC_LIVEKIT_URL;
       if (!token || !livekitUrl) return;
+      // Patient must explicitly click "Join Consultation Now".
+      if (isPatient && !patientJoinClicked) return;
 
       if (isConnectingRef.current) return;
 
@@ -789,7 +792,7 @@ export default function ConsultationRoom() {
         try {
           roomRef.current.removeAllListeners();
           roomRef.current.disconnect();
-        } catch (_) {}
+        } catch (_) { }
         roomRef.current = null;
         connectedRoomIdRef.current = null;
       }
@@ -905,8 +908,14 @@ export default function ConsultationRoom() {
 
     return () => {
       isCancelled = true;
+
+      // Allow a fresh connection attempt if this effect was
+      // cleaned up before LiveKit actually connected.
+      if (isConnectingRef.current && roomRef.current?.state !== "connected") {
+        isConnectingRef.current = false;
+      }
     };
-  }, [token, showCallView, appointmentId, isVideoOff, isMuted]);
+  }, [token, showCallView, appointmentId, isVideoOff, isMuted, patientJoinClicked]);
 
   // Global room and media cleanup on appointment change or unmount
   useEffect(() => {
@@ -920,7 +929,7 @@ export default function ConsultationRoom() {
         try {
           roomRef.current.removeAllListeners();
           roomRef.current.disconnect();
-        } catch (_) {}
+        } catch (_) { }
         roomRef.current = null;
       }
       connectedRoomIdRef.current = null;
@@ -935,7 +944,7 @@ export default function ConsultationRoom() {
       if (roomRef.current) {
         try {
           roomRef.current.disconnect();
-        } catch (_) {}
+        } catch (_) { }
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -1185,7 +1194,7 @@ export default function ConsultationRoom() {
         try {
           roomRef.current.removeAllListeners();
           await roomRef.current.disconnect();
-        } catch (_) {}
+        } catch (_) { }
         roomRef.current = null;
       }
     } catch (_) { }
@@ -1224,7 +1233,7 @@ export default function ConsultationRoom() {
         try {
           roomRef.current.removeAllListeners();
           await roomRef.current.disconnect();
-        } catch (_) {}
+        } catch (_) { }
         roomRef.current = null;
       }
     } catch (_) { }
@@ -1285,7 +1294,7 @@ export default function ConsultationRoom() {
         try {
           activeRoom.removeAllListeners();
           await activeRoom.disconnect();
-        } catch (_) {}
+        } catch (_) { }
         roomRef.current = null;
       }
 
@@ -1397,7 +1406,7 @@ export default function ConsultationRoom() {
             setSaveStatus('saved');
           }
         },
-        () => {}
+        () => { }
       );
     }
 
@@ -1670,8 +1679,10 @@ export default function ConsultationRoom() {
 
   // Details formatted for patient card
   const patientName = appointment.patient?.name || appointment.patient_name || 'Patient';
-  const age = appointment.patient?.age || '32';
-  const gender = appointment.patient?.gender || 'Female';
+  const rawDob = appointment.patient?.date_of_birth;
+  const computedAge = calculateAge(rawDob);
+  const age = computedAge !== null ? computedAge : (appointment.patient?.age ?? null);
+  const gender = appointment.patient?.gender || null;
   const complaint = appointment.reason || 'General Consultation';
   const symptoms = appointment.symptoms || '';
   const date = appointment.scheduled_date || appointment.appointment_date || '2026-08-17';
@@ -1730,7 +1741,7 @@ export default function ConsultationRoom() {
 
               {/* Remote Participant Name Tag Overlay */}
               <div
-                className={`absolute top-4 left-4 z-20 bg-slate-900/80 backdrop-blur-sm border border-slate-700/60 px-3 py-1 rounded-full text-xs font-medium text-slate-200 flex items-center gap-1.5 shadow-lg pointer-events-none transition-opacity duration-300 ${hasRemoteVideo ? 'opacity-100' : 'opacity-0'
+                className={`absolute top-4 left-4 z-20 bg-slate-900/80 backdrop-blur-sm border border-slate-700/60 px-3 py-1 rounded-full text-xs font-medium text-slate-200 flex items-center gap-1.5 shadow-lg pointer-events-none transition-opacity duration-300 ${hasRemoteVideo && hasRemoteParticipant ? 'opacity-100' : 'opacity-0'
                   }`}
               >
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
@@ -1750,9 +1761,11 @@ export default function ConsultationRoom() {
                   <Loader2 className="w-7 h-7 animate-spin text-emerald-400" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-semibold text-slate-200 mb-1">Waiting for participant video track...</h3>
+                  <h3 className="text-sm font-semibold text-slate-200 mb-1">
+                    {isDoctor ? "Waiting for patient to join..." : "Waiting for doctor to join..."}
+                  </h3>
                   <p className="text-xs text-slate-500 max-w-xs">
-                    {isDoctor ? "The patient will appear here once connected to the session." : "Connecting to doctor's video feed..."}
+                    {isDoctor ? "The patient will appear here once connected to the session." : "The doctor will appear here once connected to the session."}
                   </p>
                 </div>
               </div>
@@ -1959,7 +1972,7 @@ export default function ConsultationRoom() {
                   <div className="grid grid-cols-2 gap-2">
                     <div className="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800">
                       <span className="text-slate-400 text-[10px] block font-medium">Age & Gender</span>
-                      <span className="font-semibold text-slate-200">{age} yrs • {gender}</span>
+                      <span className="font-semibold text-slate-200">{age !== null ? `${age} yrs` : 'Age N/A'} • {gender || 'Gender N/A'}</span>
                     </div>
                     <div className="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800">
                       <span className="text-slate-400 text-[10px] block font-medium">Appointment Time</span>

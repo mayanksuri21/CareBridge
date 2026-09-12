@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { calculateAge } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,7 +48,7 @@ export async function GET(request: Request) {
     if (patientIds.length > 0) {
       const { data: profiles } = await supabase
         .from('profiles')
-        .select('id, name, email, age, gender, blood_group, phone')
+        .select('id, name, email, age, gender, blood_group, phone, date_of_birth')
         .in('id', patientIds);
 
       (profiles || []).forEach(p => {
@@ -62,12 +63,15 @@ export async function GET(request: Request) {
       const pid = a.patient_id || 'unknown';
       const prof = profilesMap[pid] || {};
       
+      const dynamicAge = calculateAge(prof.date_of_birth);
+      const computedAge = dynamicAge !== null ? dynamicAge : (prof.age || 'N/A');
+
       if (!patientMap[pid]) {
         patientMap[pid] = {
           patient_id: pid,
           name: prof.name || a.patient_name || 'Anonymous Patient',
           email: prof.email || 'No email provided',
-          age: prof.age || 'N/A',
+          age: computedAge,
           gender: prof.gender || 'N/A',
           blood_group: prof.blood_group || 'N/A',
           phone: prof.phone || 'N/A',
@@ -91,11 +95,13 @@ export async function GET(request: Request) {
 
       if (!patientMap[pid]) {
         const prof = profilesMap[pid] || {};
+        const dynamicAge = calculateAge(prof.date_of_birth);
+        const computedAge = dynamicAge !== null ? dynamicAge : (prof.age || 'N/A');
         patientMap[pid] = {
           patient_id: pid,
           name: prof.name || 'Anonymous Patient',
           email: prof.email || 'No email provided',
-          age: prof.age || 'N/A',
+          age: computedAge,
           gender: prof.gender || 'N/A',
           blood_group: prof.blood_group || 'N/A',
           phone: prof.phone || 'N/A',

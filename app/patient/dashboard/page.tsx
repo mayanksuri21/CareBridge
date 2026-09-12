@@ -5,6 +5,7 @@ import { createClient } from "@supabase/supabase-js"
 import { PatientDashboardClient } from "@/components/patient/patient-dashboard-client"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import type { PrintablePrescription } from "@/lib/generate-prescription-pdf"
+import { calculateAge } from "@/lib/utils"
 
 export const dynamic = "force-dynamic"
 
@@ -13,6 +14,9 @@ type PatientProfile = {
   name: string | null
   email: string | null
   language: string | null
+  age?: number | string | null
+  gender?: string | null
+  date_of_birth?: string | null
 }
 
 export default async function PatientDashboardPage() {
@@ -97,6 +101,11 @@ export default async function PatientDashboardPage() {
       const docName = doc?.name || rx.doctor_name || 'Rahul Sharma'
       const cleanDocName = docName.startsWith('Dr. ') ? docName.substring(4) : docName
 
+      const rawDob = profile?.date_of_birth
+      const dynamicAge = calculateAge(rawDob)
+      const patientAge = dynamicAge !== null ? dynamicAge : (profile?.age || '')
+      const patientGender = profile?.gender || ''
+
       return {
         id: rx.id,
         created_at: rx.created_at,
@@ -105,7 +114,10 @@ export default async function PatientDashboardPage() {
         diagnosis: diagnosis || 'General Consultation',
         medicines: medicinesList,
         advice: advice || 'Follow prescribed dosage',
-        instructions: advice || 'Follow prescribed dosage'
+        instructions: advice || 'Follow prescribed dosage',
+        patient_name: patient.name,
+        patient_age: patientAge,
+        patient_gender: patientGender
       }
     })
   }

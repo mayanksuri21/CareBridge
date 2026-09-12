@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { calculateAge } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,7 +27,7 @@ export async function GET(request: Request) {
       query = query.eq('appointment_id', appointmentId);
     } else {
       let resolvedPatientId = patientId;
-      
+
       // Fallback to logged-in user session
       if (!resolvedPatientId) {
         try {
@@ -83,19 +84,43 @@ export async function GET(request: Request) {
       }
     }
 
+    // Resolve appointment details across all retrieved prescriptions
+    const apptIds = Array.from(new Set(prescriptions.map((rx: any) => rx.appointment_id).filter(Boolean)));
+    let apptMap = new Map();
+    if (apptIds.length > 0) {
+      const { data: appts } = await supabaseAdmin
+        .from('appointments')
+        .select('id, patient_id, patient_name, patient_email, phone')
+        .in('id', apptIds);
+      if (appts) {
+        apptMap = new Map(appts.map((a: any) => [a.id, a]));
+      }
+    }
+
+    // Resolve missing patient_id from appointments if needed
+    for (const rx of prescriptions) {
+      if (!rx.patient_id && rx.appointment_id && apptMap.has(rx.appointment_id)) {
+        rx.patient_id = apptMap.get(rx.appointment_id).patient_id;
+      }
+    }
+
     // Resolve patient details across all retrieved prescriptions
     const patientIds = Array.from(new Set(prescriptions.map((rx: any) => rx.patient_id).filter(Boolean)));
     let patientMap = new Map();
     if (patientIds.length > 0) {
-      const { data: patientProfiles } = await supabaseAdmin
+      const { data: patientProfiles, error: patientProfileError } = await supabaseAdmin
         .from('profiles')
-        .select('id, name, age, gender, email, phone')
+        .select('id, name, email, phone')
         .in('id', patientIds);
+
+      if (patientProfileError) {
+        console.error("Patient profile fetch error:", patientProfileError);
+      }
+
       if (patientProfiles) {
         patientMap = new Map(patientProfiles.map((p: any) => [p.id, p]));
       }
     }
-
     // Format output to ensure it matches the PrintablePrescription format
     const formatted = prescriptions.map((rx: any) => {
       let medicinesList = [];
@@ -107,12 +132,12 @@ export async function GET(request: Request) {
           if (match) {
             medicinesList = JSON.parse(match[1]);
           }
-        } catch {}
+        } catch { }
       }
 
       let diagnosis = rx.diagnosis;
       let advice = rx.advice || rx.note;
-      
+
       // Parse out clean advice/instructions if note has concatenated metadata
       if (rx.note && rx.note.includes('Instructions:')) {
         const match = rx.note.match(/Instructions:\s*([\s\S]*)/i);
@@ -129,12 +154,13 @@ export async function GET(request: Request) {
       const docName = doc?.name || rx.doctor_name || 'Rahul Sharma';
       const cleanDocName = docName.startsWith('Dr. ') ? docName.substring(4) : docName;
 
+      const appt = rx.appointment_id ? apptMap.get(rx.appointment_id) : null;
       const patientProf = patientMap.get(rx.patient_id);
-      const patientName = patientProf?.name || rx.patient_name || 'Patient';
-      const patientAge = patientProf?.age || '';
-      const patientGender = patientProf?.gender || '';
-      const resolvedPatientEmail = patientProf?.email || '';
-      const patientPhone = patientProf?.phone || '';
+      const patientName = patientProf?.name || appt?.patient_name || rx.patient_name || 'Patient';
+      const patientAge = patientProf?.age ? String(patientProf.age) : 'N/A';
+      const patientGender = patientProf?.gender || 'N/A';
+      const resolvedPatientEmail = patientProf?.email || appt?.patient_email || 'No email';
+      const patientPhone = (patientProf?.phone && patientProf.phone.trim() !== '') ? patientProf.phone.trim() : (appt?.phone || 'No phone');
 
       return {
         id: rx.id,
@@ -155,9 +181,9 @@ export async function GET(request: Request) {
       };
     });
 
-    return NextResponse.json({ 
+    return NextResponse.json({
       prescriptions: formatted,
-      prescription: formatted[0] || null 
+      prescription: formatted[0] || null
     });
   } catch (error: any) {
     console.error('Prescriptions GET Error:', error);
@@ -182,6 +208,18 @@ export async function POST(request: Request) {
     const diagnosis = body.diagnosis || "Consultation Prescription";
     const medications = body.medications || body.medicines || [];
     const instructions = body.instructions || body.advice || body.notes || "";
+
+    let resolvedPatientId = patient_id;
+    if (!resolvedPatientId && appointment_id) {
+      const { data: appt } = await supabaseAdmin
+        .from('appointments')
+        .select('patient_id')
+        .eq('id', appointment_id)
+        .maybeSingle();
+      if (appt?.patient_id) {
+        resolvedPatientId = appt.patient_id;
+      }
+    }
 
     // Resolve doctor name to store it in DB
     let doctorName = 'Rahul Sharma';
@@ -220,26 +258,31 @@ export async function POST(request: Request) {
 
     if (existingRx) {
       let updatedResult;
+      const updatePayload: any = {
+        diagnosis,
+        medicines: medications,
+        advice: instructions,
+        note: formattedNote
+      };
+      if (resolvedPatientId) {
+        updatePayload.patient_id = resolvedPatientId;
+      }
+
       try {
         const { data, error } = await supabaseAdmin
           .from('prescriptions')
-          .update({
-            diagnosis,
-            medicines: medications,
-            advice: instructions,
-            note: formattedNote
-          })
+          .update(updatePayload)
           .eq('id', existingRx.id)
           .select()
           .single();
         if (error) throw error;
         updatedResult = data;
       } catch {
+        const fallbackPayload: any = { note: formattedNote };
+        if (resolvedPatientId) fallbackPayload.patient_id = resolvedPatientId;
         const { data, error } = await supabaseAdmin
           .from('prescriptions')
-          .update({
-            note: formattedNote
-          })
+          .update(fallbackPayload)
           .eq('id', existingRx.id)
           .select()
           .single();
@@ -260,7 +303,7 @@ export async function POST(request: Request) {
           {
             appointment_id,
             doctor_id,
-            patient_id,
+            patient_id: resolvedPatientId,
             doctor_name: doctorName,
             diagnosis,
             medicines: medications,
@@ -276,7 +319,7 @@ export async function POST(request: Request) {
       insertResult = data;
     } catch (err: any) {
       console.warn('Inserting using baseline prescriptions schema fallback...', err.message);
-      
+
       const { data, error } = await supabaseAdmin
         .from('prescriptions')
         .insert([

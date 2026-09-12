@@ -3,10 +3,26 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
 import { AccessToken } from "livekit-server-sdk"
 
-function getAdminClient() {
+function getAdminClient(authHeader?: string | null) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  return createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } })
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (serviceKey) {
+    return createClient(supabaseUrl, serviceKey, {
+      auth: { persistSession: false }
+    });
+  }
+
+  return createClient(
+    supabaseUrl,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      global: {
+        headers: authHeader ? { Authorization: authHeader } : {}
+      },
+      auth: { persistSession: false }
+    }
+  );
 }
 
 async function handleTokenGeneration(req: Request, roomName?: string, participantName?: string) {
@@ -27,8 +43,7 @@ async function handleTokenGeneration(req: Request, roomName?: string, participan
       return NextResponse.json({ error: "roomName required" }, { status: 400 })
     }
 
-    const adminSupabase = getAdminClient()
-
+    const adminSupabase = getAdminClient(authHeader)
     // Fetch the appointment from database using service role (admin) to verify ownership and admission state
     const { data: appt, error: apptErr } = await adminSupabase
       .from("appointments")
@@ -52,7 +67,7 @@ async function handleTokenGeneration(req: Request, roomName?: string, participan
         .eq("id", user.id)
         .maybeSingle()
 
-      if (profile?.role === "doctor" || user.user_metadata?.role === "doctor") {
+      if (profile?.role === "doctor") {
         isDoctor = true
       }
     }

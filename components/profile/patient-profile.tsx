@@ -79,16 +79,36 @@ export default function PatientProfile() {
         throw new Error("No user ID found. Please log in again.")
       }
 
-      const { error } = await supabase
+      const { data: existingProf } = await supabase
         .from("profiles")
-        .upsert({
-          id: uid,
-          name: name.trim(),
-          phone: phone.trim(),
-          language,
-          address: address.trim(),
-          role: "patient"
-        })
+        .select("role")
+        .eq("id", uid)
+        .maybeSingle()
+
+      const existingRole = existingProf?.role || "patient"
+
+      const updatePayload: any = {
+        id: uid,
+        name: name.trim(),
+        phone: phone.trim(),
+        language,
+        address: address.trim(),
+        role: existingRole
+      }
+
+      if (existingProf?.date_of_birth) updatePayload.date_of_birth = existingProf.date_of_birth
+      if (existingProf?.age) updatePayload.age = existingProf.age
+      if (existingProf?.gender) updatePayload.gender = existingProf.gender
+
+      let { error } = await supabase
+        .from("profiles")
+        .upsert(updatePayload)
+
+      if (error && (error.message?.includes("date_of_birth") || error.code === "42703")) {
+        delete updatePayload.date_of_birth
+        const retry = await supabase.from("profiles").upsert(updatePayload)
+        error = retry.error
+      }
 
       if (error) {
         throw new Error(`Database error: ${error.message}`)

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { Calendar, Clock, Video, RefreshCw, MessageSquare, AlertCircle, CheckCircle2, XCircle, FileText, Loader2, CalendarCheck, Trash2 } from "lucide-react";
+import { Calendar, Clock, Video, RefreshCw, MessageSquare, AlertCircle, CheckCircle2, XCircle, FileText, Loader2, CalendarCheck, Trash2, PhoneOff } from "lucide-react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -67,6 +67,34 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
   const [declineId, setDeclineId] = useState<string | null>(null);
   const [declineReasonOption, setDeclineReasonOption] = useState("");
   const [declineCustomReason, setDeclineCustomReason] = useState("");
+
+  // End consultation modal states
+  const [endConsultationId, setEndConsultationId] = useState<string | null>(null);
+  const [isEnding, setIsEnding] = useState(false);
+
+  const handleConfirmEndConsultation = async () => {
+    if (!endConsultationId) return;
+    setIsEnding(true);
+    try {
+      const res = await fetch('/api/appointments/call', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ appointment_id: endConsultationId, action: 'end' }),
+      });
+      if (res.ok) {
+        setConfirmedConsultations((prev) => prev.filter((a) => a.id !== endConsultationId));
+        toast.success("Consultation ended successfully.");
+      } else {
+        toast.error("Failed to end consultation.");
+      }
+    } catch (err) {
+      console.error("End consultation error:", err);
+      toast.error("Failed to end consultation.");
+    } finally {
+      setIsEnding(false);
+      setEndConsultationId(null);
+    }
+  };
 
   const fetchRequests = useCallback(async () => {
     try {
@@ -515,12 +543,23 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
 
                   <div className="flex flex-wrap items-center gap-2">
                     {!isPast && (
-                      <Button
-                        onClick={() => handleStartConsultation(req.id)}
-                        className="px-5 py-2.5 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.3)] flex items-center justify-center gap-2 transition cursor-pointer"
-                      >
-                        <Video className="w-4 h-4" /> {req.status === 'in_progress' || req.is_doctor_in_room || req.reason?.includes('[DOCTOR_IN_ROOM]') ? "Rejoin Consultation" : "Start Consultation"}
-                      </Button>
+                      <>
+                        <Button
+                          onClick={() => handleStartConsultation(req.id)}
+                          className="px-5 py-2.5 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.3)] flex items-center justify-center gap-2 transition cursor-pointer"
+                        >
+                          <Video className="w-4 h-4" /> {req.status === 'in_progress' || req.is_doctor_in_room || req.reason?.includes('[DOCTOR_IN_ROOM]') ? "Rejoin Consultation" : "Start Consultation"}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setEndConsultationId(req.id)}
+                          className="px-4 py-2.5 rounded-xl text-xs font-bold border-rose-500/40 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 hover:text-rose-200 transition cursor-pointer flex items-center justify-center gap-1.5"
+                        >
+                          <PhoneOff className="w-3.5 h-3.5 text-rose-400" />
+                          End Consultation
+                        </Button>
+                      </>
                     )}
                     {isPast && (
                       <Button
@@ -599,6 +638,48 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
               className="bg-red-650 hover:bg-red-600 text-white rounded-xl"
             >
               Confirm Decline
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* End Consultation Confirmation Modal */}
+      <Dialog open={Boolean(endConsultationId)} onOpenChange={(open) => !open && setEndConsultationId(null)}>
+        <DialogContent className="bg-slate-900 border-slate-800 text-white sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-bold text-white flex items-center gap-2">
+              <PhoneOff className="w-5 h-5 text-rose-400" />
+              End Consultation?
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-400 mt-2">
+              Are you sure you want to end this consultation? This will mark the session as completed and close the consultation room for the patient.
+            </DialogDescription>
+          </DialogHeader>
+
+          <DialogFooter className="flex items-center gap-3 mt-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setEndConsultationId(null)}
+              disabled={isEnding}
+              className="border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 text-xs rounded-xl"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleConfirmEndConsultation}
+              disabled={isEnding}
+              className="bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-rose-900/40"
+            >
+              {isEnding ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+                  Ending...
+                </>
+              ) : (
+                "Yes, End Consultation"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

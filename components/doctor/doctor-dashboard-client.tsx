@@ -96,7 +96,7 @@ export function DoctorDashboardClient({
       if (!res.ok) throw new Error("Failed to search patients")
       const data = await res.json()
       setPatients(data.patients || [])
-      
+
       // Keep selected patient profile in sync if details change
       if (selectedPatient) {
         const updatedSelected = (data.patients || []).find((p: any) => p.patient_id === selectedPatient.patient_id)
@@ -132,7 +132,7 @@ export function DoctorDashboardClient({
       try {
         setSavedSchedule(JSON.parse(cached))
         setLoadingSchedule(false)
-      } catch (_) {}
+      } catch (_) { }
     }
 
     // 2. Fetch from DB
@@ -239,6 +239,8 @@ export function DoctorDashboardClient({
             </Button>
             <PrescriptionModal
               doctorId={doctorId}
+              patientId={selectedPatient?.patient_id}
+              patientName={selectedPatient?.name}
               triggerLabel="Quick Prescription"
             />
           </div>
@@ -255,7 +257,7 @@ export function DoctorDashboardClient({
 
       <section className="container mx-auto grid gap-4 px-4 pb-4 lg:grid-cols-[1.2fr_1fr]">
         <PendingRequestsPanel doctorId={doctorId} />
-        
+
         {/* Schedule & Leave Manager Card UI */}
         <Card>
           <CardHeader>
@@ -268,13 +270,13 @@ export function DoctorDashboardClient({
                   Configure templates, specific date overrides, and leaves for patient booking.
                 </CardDescription>
               </div>
-              
+
               <Button className="gap-2" onClick={() => setModalOpen(true)}>
                 <Clock className="h-4 w-4" /> Set Availability
               </Button>
             </div>
           </CardHeader>
-          
+
           <CardContent>
             {loadingSchedule ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground justify-center py-6">
@@ -296,9 +298,8 @@ export function DoctorDashboardClient({
                     {savedSchedule.map((item: any, idx: number) => {
                       const isLeavePreset = item.slots && item.slots.length === 0;
                       return (
-                        <div key={idx} className={`flex items-center justify-between border rounded-lg p-3 ${
-                          isLeavePreset ? "border-amber-500/20 bg-amber-500/5" : "bg-muted/10"
-                        }`}>
+                        <div key={idx} className={`flex items-center justify-between border rounded-lg p-3 ${isLeavePreset ? "border-amber-500/20 bg-amber-500/5" : "bg-muted/10"
+                          }`}>
                           <div>
                             <span className="text-sm font-semibold block">{item.interval}</span>
                             {isLeavePreset ? (
@@ -393,7 +394,7 @@ export function DoctorDashboardClient({
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block mb-3 px-1">
                   Patients ({patients.length})
                 </span>
-                
+
                 {loadingPatients ? (
                   <div className="text-center py-8 text-sm text-muted-foreground">
                     Loading records...
@@ -409,11 +410,10 @@ export function DoctorDashboardClient({
                       <div
                         key={p.patient_id}
                         onClick={() => setSelectedPatient(p)}
-                        className={`p-3 rounded-lg border cursor-pointer transition-all ${
-                          isSelected
+                        className={`p-3 rounded-lg border cursor-pointer transition-all ${isSelected
                             ? "border-primary bg-primary/10 text-primary-foreground"
                             : "border-border hover:bg-muted/40 text-foreground"
-                        }`}
+                          }`}
                       >
                         <span className="font-semibold block text-sm">{p.name}</span>
                         <span className="text-xs text-muted-foreground block truncate">{p.email}</span>

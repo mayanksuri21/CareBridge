@@ -35,6 +35,7 @@ import Link from "next/link"
 import type { Session } from "@supabase/supabase-js"
 import { TextEffect } from "@/components/ui/text-effect"
 import { useAuth } from "@/components/auth-provider"
+import { calculateAge } from "@/lib/utils"
 
 interface ProfileData {
   id: string
@@ -54,6 +55,7 @@ interface ProfileData {
   first_login_at: string
   created_at: string
   updated_at: string
+  date_of_birth?: string | null
   age?: number | string | null
   gender?: string | null
   blood_group?: string | null
@@ -111,6 +113,7 @@ export default function ProfilePage() {
         }
         if (!profile) {
           console.log("Profile page: No profile found, showing onboarding")
+          const userDob = authSession.user.user_metadata?.date_of_birth || authSession.user.user_metadata?.dob || "";
           setShowOnboarding(true)
           setProfileData({
             name: authSession.user.user_metadata?.full_name || "",
@@ -125,8 +128,9 @@ export default function ProfilePage() {
             avatar_url: "",
             specialty: "",
             language: "en",
-            age: "",
-            gender: "",
+            date_of_birth: userDob,
+            age: userDob ? (calculateAge(userDob) ?? "") : "",
+            gender: authSession.user.user_metadata?.gender || "",
             blood_group: "",
             emergency_contact: "",
             allergies: ""
@@ -134,13 +138,16 @@ export default function ProfilePage() {
         } else {
           console.log("Profile page: Profile found, loading data:", profile.name)
           const isJsonAbout = profile.about?.trim().startsWith('[') || profile.about?.trim().startsWith('{');
+          const effectiveDob = profile.date_of_birth || authSession.user.user_metadata?.date_of_birth || authSession.user.user_metadata?.dob || "";
+          const dynamicAge = effectiveDob ? (calculateAge(effectiveDob) ?? profile.age ?? "") : (profile.age ?? authSession.user.user_metadata?.age ?? "");
           setProfileData({
             ...profile,
             name: profile.name || authSession.user.user_metadata?.full_name || "",
             email: profile.email || authSession.user.email || "",
             about: isJsonAbout ? "" : (profile.about || ""),
-            age: profile.age ?? "",
-            gender: profile.gender ?? "",
+            date_of_birth: effectiveDob,
+            age: dynamicAge,
+            gender: profile.gender || authSession.user.user_metadata?.gender || "",
             blood_group: profile.blood_group ?? "",
             emergency_contact: profile.emergency_contact ?? "",
             allergies: profile.allergies ?? ""
@@ -279,7 +286,10 @@ export default function ProfilePage() {
         avatarUrl = imagePreview
       }
 
-      const updateData = {
+      const dobVal = profileData.date_of_birth || null;
+      const dynamicCalculatedAge = dobVal ? calculateAge(dobVal) : (profileData.age ? Number(profileData.age) : null);
+
+      const updateData: any = {
         id: session.user.id,
         name: profileData.name,
         email: profileData.email,
@@ -293,17 +303,33 @@ export default function ProfilePage() {
         avatar_url: avatarUrl || '',
         specialty: profileData.specialty || '',
         language: profileData.language || 'en',
+        age: dynamicCalculatedAge,
+        gender: profileData.gender || null,
+        blood_group: profileData.blood_group || null,
+        emergency_contact: profileData.emergency_contact || null,
+        allergies: profileData.allergies || null,
         onboarding_completed: true,
         first_login_at: profileData.first_login_at || new Date().toISOString(),
         updated_at: new Date().toISOString()
       }
 
+      if (dobVal) {
+        updateData.date_of_birth = dobVal;
+      }
+
       console.log('Saving profile data:', updateData)
 
-      const { error, data } = await supabase
+      let { error, data } = await supabase
         .from("profiles")
         .upsert(updateData, { onConflict: 'id' })
         .select()
+
+      if (error && (error.message?.includes("date_of_birth") || error.code === "42703")) {
+        delete updateData.date_of_birth;
+        const retry = await supabase.from("profiles").upsert(updateData, { onConflict: 'id' }).select();
+        error = retry.error;
+        data = retry.data;
+      }
 
       if (error) {
         console.error('Database error:', error)
@@ -582,15 +608,26 @@ export default function ProfilePage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="age">Age</Label>
+                      <div className="flex items-center justify-between">
+                        <Label htmlFor="date_of_birth">Date of Birth</Label>
+                        {profileData.date_of_birth && calculateAge(profileData.date_of_birth) !== null && (
+                          <span className="text-xs text-primary font-semibold">
+                            Age: {calculateAge(profileData.date_of_birth)} yrs
+                          </span>
+                        )}
+                      </div>
                       <Input
-                        id="age"
-                        type="number"
-                        min="1"
-                        max="120"
-                        value={profileData.age || ""}
-                        onChange={(e) => handleInputChange("age", e.target.value)}
-                        placeholder="Age (1-120)"
+                        id="date_of_birth"
+                        type="date"
+                        value={profileData.date_of_birth || ""}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          handleInputChange("date_of_birth", val);
+                          const dynamicAge = calculateAge(val);
+                          if (dynamicAge !== null) {
+                            handleInputChange("age", dynamicAge);
+                          }
+                        }}
                       />
                     </div>
 
@@ -759,10 +796,17 @@ export default function ProfilePage() {
                         </div>
                       )}
 
-                      {(profileData.age !== undefined && profileData.age !== null && profileData.age !== "") && (
+                      {((profileData.date_of_birth && calculateAge(profileData.date_of_birth) !== null) || (profileData.age !== undefined && profileData.age !== null && profileData.age !== "")) && (
                         <div className="flex items-center gap-3">
                           <User className="h-5 w-5 text-muted-foreground" />
-                          <span>Age: {profileData.age} years</span>
+                          <span>Age: {profileData.date_of_birth && calculateAge(profileData.date_of_birth) !== null ? calculateAge(profileData.date_of_birth) : profileData.age} years</span>
+                        </div>
+                      )}
+
+                      {profileData.date_of_birth && (
+                        <div className="flex items-center gap-3">
+                          <User className="h-5 w-5 text-muted-foreground" />
+                          <span>Date of Birth: {profileData.date_of_birth}</span>
                         </div>
                       )}
 

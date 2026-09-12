@@ -62,7 +62,7 @@ export async function POST(request: Request) {
     if (status === 'scheduled') {
       dbStatus = 'scheduled';
     } else if (status === 'missed') {
-      dbStatus = 'missed';
+      dbStatus = 'cancelled';
       if (!reasonVal.includes('[ARCHIVED_BY_DOCTOR]')) {
         reasonVal = `${reasonVal} [ARCHIVED_BY_DOCTOR]`.trim();
       }
@@ -70,8 +70,8 @@ export async function POST(request: Request) {
       dbStatus = 'cancelled';
     }
 
-    const updatePayload: any = { 
-      status: dbStatus, 
+    const updatePayload: any = {
+      status: dbStatus,
       reason: reasonVal
     };
 
@@ -89,7 +89,7 @@ export async function POST(request: Request) {
       let fallbackStatus = dbStatus;
       if (dbStatus === 'scheduled') fallbackStatus = 'booked';
       if (dbStatus === 'cancelled' || dbStatus === 'declined') fallbackStatus = 'cancelled';
-      
+
       const fallbackPayload: any = { ...updatePayload, status: fallbackStatus };
       const fallback = await supabase
         .from('appointments')
@@ -130,9 +130,9 @@ export async function POST(request: Request) {
       await releaseSlot(supabase, appointmentId);
     }
 
-    const frontendStatus = 
-      dbStatus === 'booked' ? 'scheduled' : 
-      dbStatus === 'cancelled' ? 'declined' : dbStatus;
+    const frontendStatus =
+      dbStatus === 'booked' ? 'scheduled' :
+        dbStatus === 'cancelled' ? 'declined' : dbStatus;
 
     const responseAppointment = {
       ...(data || {}),

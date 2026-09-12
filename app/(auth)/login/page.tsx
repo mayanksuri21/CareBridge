@@ -28,6 +28,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client"
 import { getPostLoginRedirect } from "@/lib/supabase/profile-utils"
 import { useLanguage } from "@/components/language-provider"
 import { useAuth } from "@/components/auth-provider"
+import { calculateAge } from "@/lib/utils"
 
 type Role = "patient" | "doctor"
 
@@ -44,6 +45,7 @@ function AuthPageContent() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
+  const [dob, setDob] = useState("")
   const [age, setAge] = useState("")
   const [gender, setGender] = useState("")
   const [showPassword, setShowPassword] = useState(false)
@@ -72,8 +74,15 @@ function AuthPageContent() {
       return
     }
 
-    if (!age || isNaN(Number(age)) || Number(age) < 1 || Number(age) > 120) {
-      setStatus({ type: "error", message: "Please enter a valid age (1-120)" })
+    const calculatedAge = dob ? calculateAge(dob) : (age && !isNaN(Number(age)) ? Number(age) : null);
+
+    if (dob && calculatedAge === null) {
+      setStatus({ type: "error", message: "Please enter a valid Date of Birth" })
+      return
+    }
+
+    if (!calculatedAge && (!age || isNaN(Number(age)) || Number(age) < 1 || Number(age) > 120)) {
+      setStatus({ type: "error", message: "Please enter your Date of Birth or a valid age (1-120)" })
       return
     }
 
@@ -95,7 +104,8 @@ function AuthPageContent() {
             phone,
             role,
             language: "en",
-            age: Number(age),
+            date_of_birth: dob || null,
+            age: calculatedAge,
             gender
           }
         }
@@ -113,7 +123,8 @@ function AuthPageContent() {
             phone,
             role,
             language: "en",
-            age: Number(age),
+            date_of_birth: dob || null,
+            age: calculatedAge,
             gender
           })
         })
@@ -287,15 +298,24 @@ function AuthPageContent() {
 
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor="age">Age</Label>
+                        <div className="flex items-center justify-between">
+                          <Label htmlFor="dob">Date of Birth</Label>
+                          {dob && calculateAge(dob) !== null && (
+                            <span className="text-[11px] text-primary font-semibold">
+                              {calculateAge(dob)} yrs
+                            </span>
+                          )}
+                        </div>
                         <Input
-                          id="age"
-                          type="number"
-                          min="1"
-                          max="120"
-                          placeholder="Age"
-                          value={age}
-                          onChange={(e) => setAge(e.target.value)}
+                          id="dob"
+                          type="date"
+                          value={dob}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setDob(val);
+                            const ageVal = calculateAge(val);
+                            if (ageVal !== null) setAge(String(ageVal));
+                          }}
                         />
                       </div>
 

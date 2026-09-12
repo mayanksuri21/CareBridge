@@ -34,7 +34,7 @@ export function generatePrescriptionPDF(prescription: PrintablePrescription) {
     ? (prescription.doctor_name.startsWith("Dr. ") ? prescription.doctor_name : `Dr. ${prescription.doctor_name}`)
     : "Dr. Rahul Sharma"
     
-  const patientLabel = prescription.patient_name || "Suman Suri"
+  const patientLabel = prescription.patient_name || ""
   const ageLabel = prescription.patient_age ? `${prescription.patient_age} yrs` : "N/A"
   const genderLabel = prescription.patient_gender || "N/A"
   const patientAgeSex = `${ageLabel} / ${genderLabel}`

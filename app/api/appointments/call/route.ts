@@ -1,12 +1,26 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { calculateAge } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
 
-function getAdminClient() {
+function getSupabaseClient(authHeader?: string | null) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  return createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (serviceKey) {
+    return createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+  }
+
+  const headers: Record<string, string> = {};
+  if (authHeader) {
+    headers['Authorization'] = authHeader;
+  }
+
+  return createClient(supabaseUrl, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
+    global: { headers },
+    auth: { persistSession: false }
+  });
 }
 
 /** Release the linked schedule slot so it becomes bookable again. */
@@ -33,7 +47,8 @@ async function releaseSlot(supabase: any, appointmentId: string) {
 export async function POST(request: Request) {
   try {
     const { appointment_id, action } = await request.json();
-    const supabase = getAdminClient();
+    const authHeader = request.headers.get('authorization');
+    const supabase = getSupabaseClient(authHeader);
 
     // 1. Fetch current appointment details
     const { data: currentAppt } = await supabase
@@ -133,7 +148,8 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const appointment_id = searchParams.get('appointment_id');
-    const supabase = getAdminClient();
+    const authHeader = request.headers.get('authorization');
+    const supabase = getSupabaseClient(authHeader);
 
     const mapAppointment = (appt: any) => {
       if (!appt) return null;
@@ -187,12 +203,46 @@ export async function GET(request: Request) {
     };
 
     if (appointment_id) {
-      const { data } = await supabase.from('appointments').select('*').eq('id', appointment_id).maybeSingle();
+      let cleanId = appointment_id;
+      try { cleanId = decodeURIComponent(cleanId); } catch (_) {}
+      cleanId = cleanId.trim().replace(/\s+/g, '-');
+      const { data } = await supabase.from('appointments').select('*').eq('id', cleanId).maybeSingle();
+      if (data?.patient_id) {
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('id, name, email, phone')
+          .eq('id', data.patient_id)
+          .maybeSingle();
+        if (prof) {
+          data.patient = {
+            ...prof,
+          };
+        }
+      }
       return NextResponse.json({ appointment: mapAppointment(data) });
     }
 
     const { data } = await supabase.from('appointments').select('*').order('created_at', { ascending: false });
-    const mapped = (data || []).map(mapAppointment);
+    const patientIds = Array.from(new Set((data || []).map((a: any) => a.patient_id).filter(Boolean)));
+    let patientMap: Record<string, any> = {};
+    if (patientIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, name, email, phone')
+        .in('id', patientIds);
+      (profiles || []).forEach((p: any) => {
+        patientMap[p.id] = {
+          ...p,
+        };
+      });
+    }
+
+    const mapped = (data || []).map((a: any) => {
+      if (a.patient_id && patientMap[a.patient_id]) {
+        a.patient = patientMap[a.patient_id];
+      }
+      return mapAppointment(a);
+    });
     return NextResponse.json({ appointments: mapped });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import QRCode from "qrcode";
 import { pdf, Document, Page, Text, View, StyleSheet, Image } from "@react-pdf/renderer";
 import { createClient } from "@supabase/supabase-js";
+import { calculateAge } from "@/lib/utils";
 
 function PrescriptionPDF({ presc, items, doctorName, patient }: any) {
   const styles = StyleSheet.create({
@@ -143,21 +144,44 @@ export async function GET(req: Request) {
     const { data: presc, error } = await supabaseAdmin.from("prescriptions").select("*").eq("id", id).maybeSingle();
     if (error || !presc) return NextResponse.json({ error: error?.message || "Not found" }, { status: 404 });
 
+    // Resolve patientId and appointment details if available
+    let patientId = presc.patient_id;
+    let appt: any = null;
+    if (presc.appointment_id) {
+      const { data } = await supabaseAdmin
+        .from("appointments")
+        .select("patient_id, patient_name, patient_email, phone")
+        .eq("id", presc.appointment_id)
+        .maybeSingle();
+      if (data) {
+        appt = data;
+        if (!patientId && data.patient_id) patientId = data.patient_id;
+      }
+    }
+
     // Fetch details
     const [docProfileRes, patProfileRes, itemsRes] = await Promise.all([
       presc.doctor_id ? supabaseAdmin.from("profiles").select("name").eq("id", presc.doctor_id).maybeSingle() : Promise.resolve({ data: null }),
-      presc.patient_id ? supabaseAdmin.from("profiles").select("name, email, age, gender, phone").eq("id", presc.patient_id).maybeSingle() : Promise.resolve({ data: null }),
+      patientId ? supabaseAdmin.from("profiles").select("name, email, phone").eq("id", patientId).maybeSingle() : Promise.resolve({ data: null }),
       supabaseAdmin.from("prescription_items").select("*").eq("prescription_id", id)
     ]);
 
     const doctorName = docProfileRes.data?.name || presc.doctor_name || "Rahul Sharma";
     const cleanDoctorName = doctorName.startsWith("Dr. ") ? doctorName : `Dr. ${doctorName}`;
-    const patient = patProfileRes.data || {
-      name: "Patient",
-      email: "",
-      age: "",
-      gender: "",
-      phone: ""
+    const patProf = patProfileRes.data;
+
+    const resolvedName = patProf?.name || appt?.patient_name || presc.patient_name || "Patient";
+    const resolvedEmail = patProf?.email || appt?.patient_email || "No email";
+    const resolvedPhone = (patProf?.phone && patProf.phone.trim() !== "") ? patProf.phone.trim() : (appt?.phone || "No phone");
+    const resolvedAge = patProf?.age ? String(patProf.age) : "";
+    const resolvedGender = patProf?.gender || "";
+
+    const patient = {
+      name: resolvedName,
+      email: resolvedEmail,
+      age: resolvedAge,
+      gender: resolvedGender,
+      phone: resolvedPhone
     };
 
     let items = itemsRes.data || [];

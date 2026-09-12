@@ -77,17 +77,25 @@ export async function completeOnboarding(userId: string): Promise<void> {
     throw error
   }
 }
+import { calculateAge } from "@/lib/utils"
+
 export async function createInitialProfile(user: User, profileData: {
   name: string
   phone: string
   role: 'patient' | 'doctor'
   address?: string
   specialty?: string
+  date_of_birth?: string
+  age?: number | string
+  gender?: string
 }): Promise<void> {
   const supabase = createSupabaseBrowserClient()
   
-  try {
-    const profileInsert = {
+  try {
+    const dob = profileData.date_of_birth || user.user_metadata?.date_of_birth || user.user_metadata?.dob || null;
+    const dynamicAge = dob ? calculateAge(dob) : (profileData.age ? Number(profileData.age) : (user.user_metadata?.age ? Number(user.user_metadata.age) : null));
+
+    const profileInsert: any = {
       id: user.id,
       name: profileData.name,
       email: user.email || '',
@@ -96,17 +104,30 @@ export async function createInitialProfile(user: User, profileData: {
       address: profileData.address || '',
       specialty: profileData.specialty || '',
       language: 'en',
+      age: dynamicAge,
+      gender: profileData.gender || user.user_metadata?.gender || null,
       onboarding_completed: false,
       first_login_at: new Date().toISOString()
     }
 
+    if (dob) {
+      profileInsert.date_of_birth = dob;
+    }
+
     console.log('Creating profile with complete data:', profileInsert)
 
-    const { error: profileError } = await supabase
+    let { error: profileError } = await supabase
       .from('profiles')
       .upsert(profileInsert, {
         onConflict: 'id'
       })
+
+    // Graceful fallback if date_of_birth column is not yet deployed in DB
+    if (profileError && (profileError.message?.includes("date_of_birth") || profileError.code === "42703")) {
+      delete profileInsert.date_of_birth;
+      const retry = await supabase.from('profiles').upsert(profileInsert, { onConflict: 'id' });
+      profileError = retry.error;
+    }
 
     if (profileError) {
       console.error('Error creating/updating profile:', profileError)
