@@ -92,20 +92,27 @@ function PrescriptionPDF({ presc, items, doctorName, patient }: any) {
 
         {/* Medicines Table */}
         <View style={styles.tableHeader}>
-          <Text style={[styles.tableHeaderCell, { width: "40%" }]}>Medicine Name</Text>
+          <Text style={[styles.tableHeaderCell, { width: items.some((it: any) => Boolean(it.instructions)) ? "30%" : "40%" }]}>Medicine Name</Text>
           <Text style={[styles.tableHeaderCell, { width: "20%" }]}>Dosage</Text>
           <Text style={[styles.tableHeaderCell, { width: "20%" }]}>Frequency</Text>
           <Text style={[styles.tableHeaderCell, { width: "20%" }]}>Duration</Text>
+          {items.some((it: any) => Boolean(it.instructions)) && (
+            <Text style={[styles.tableHeaderCell, { width: "10%" }]}>Instructions</Text>
+          )}
         </View>
 
-        {items.map((it: any, i: number) => (
-          <View key={i} style={styles.tableRow}>
-            <Text style={[styles.tableCell, { width: "40%", fontWeight: "bold" }]}>{it.medication_name}</Text>
-            <Text style={[styles.tableCell, { width: "20%" }]}>{it.dosage || "-"}</Text>
-            <Text style={[styles.tableCell, { width: "20%" }]}>{it.frequency || "-"}</Text>
-            <Text style={[styles.tableCell, { width: "20%" }]}>{it.duration || "-"}</Text>
-          </View>
-        ))}
+        {items.map((it: any, i: number) => {
+          const hasInst = items.some((item: any) => Boolean(item.instructions));
+          return (
+            <View key={i} style={styles.tableRow}>
+              <Text style={[styles.tableCell, { width: hasInst ? "30%" : "40%", fontWeight: "bold" }]}>{it.medication_name}</Text>
+              <Text style={[styles.tableCell, { width: "20%" }]}>{it.dosage || "-"}</Text>
+              <Text style={[styles.tableCell, { width: "20%" }]}>{it.frequency || "-"}</Text>
+              <Text style={[styles.tableCell, { width: "20%" }]}>{it.duration || "-"}</Text>
+              {hasInst && <Text style={[styles.tableCell, { width: "10%" }]}>{it.instructions || "-"}</Text>}
+            </View>
+          );
+        })}
 
         {/* Notes / Advice */}
         <View style={styles.adviceBox}>
@@ -162,7 +169,7 @@ export async function GET(req: Request) {
     // Fetch details
     const [docProfileRes, patProfileRes, itemsRes] = await Promise.all([
       presc.doctor_id ? supabaseAdmin.from("profiles").select("name").eq("id", presc.doctor_id).maybeSingle() : Promise.resolve({ data: null }),
-      patientId ? supabaseAdmin.from("profiles").select("name, email, phone").eq("id", patientId).maybeSingle() : Promise.resolve({ data: null }),
+      patientId ? supabaseAdmin.from("profiles").select("name, email, phone, age, gender").eq("id", patientId).maybeSingle() : Promise.resolve({ data: null }),
       supabaseAdmin.from("prescription_items").select("*").eq("prescription_id", id)
     ]);
 
@@ -196,12 +203,17 @@ export async function GET(req: Request) {
       }
     }
 
-    items = (items || []).map((it: any) => ({
-      medication_name: it.medication_name || it.medicineName || it.name || "Prescribed Medication",
-      dosage: it.dosage || "-",
-      frequency: it.frequency || it.instructions || "-",
-      duration: it.duration || "-",
-    }));
+    items = (items || []).map((it: any) => {
+      const rawFreq = it.frequency && it.frequency !== "-" ? it.frequency : "";
+      const rawInst = it.instructions && it.instructions !== "-" ? it.instructions : "";
+      return {
+        medication_name: it.medication_name || it.medicineName || it.name || "Prescribed Medication",
+        dosage: it.dosage || "-",
+        frequency: rawFreq || "-",
+        duration: it.duration || "-",
+        instructions: (rawInst && rawInst !== rawFreq) ? rawInst : ""
+      };
+    });
 
     let cleanDiagnosis = presc.diagnosis;
     if (!cleanDiagnosis && presc.note && presc.note.includes("Diagnosis:")) {

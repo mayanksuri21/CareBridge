@@ -765,7 +765,9 @@ export function PatientDashboardClient({
                     </CardHeader>
                     <CardContent className="text-xs text-slate-350 bg-slate-950/20 p-4 border-t border-slate-900" suppressHydrationWarning>
                       <span className="font-semibold text-slate-500 block mb-1 text-[10px] uppercase tracking-wider">Instructions / Advice:</span>
-                      {prescription.instructions || prescription.advice || "Follow prescribed dosage"}
+                      <div className="whitespace-pre-wrap text-slate-300">
+                        {prescription.instructions || prescription.advice || "Follow prescribed dosage"}
+                      </div>
                     </CardContent>
                   </Card>
                 ))}

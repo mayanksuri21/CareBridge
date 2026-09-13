@@ -135,6 +135,19 @@ export async function GET(request: Request) {
         } catch { }
       }
 
+      medicinesList = (medicinesList || []).map((med: any) => {
+        const rawFreq = med.frequency && med.frequency !== '-' ? med.frequency : '';
+        const rawInst = med.instructions && med.instructions !== '-' ? med.instructions : '';
+        return {
+          ...med,
+          medication_name: med.medication_name || med.name || med.medicineName || 'Prescribed Medication',
+          dosage: med.dosage || '-',
+          frequency: rawFreq || '-',
+          duration: med.duration || '-',
+          instructions: (rawInst && rawInst !== rawFreq) ? rawInst : ''
+        };
+      });
+
       let diagnosis = rx.diagnosis;
       let advice = rx.advice || rx.note;
 

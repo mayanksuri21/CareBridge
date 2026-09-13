@@ -69,7 +69,7 @@ export default async function PrescriptionPage({ params }: PrescriptionPageProps
   // Fetch related profiles and prescription items
   const [docProfileRes, patProfileRes, itemsRes] = await Promise.all([
     presc.doctor_id ? supabaseAdmin.from("profiles").select("name").eq("id", presc.doctor_id).maybeSingle() : Promise.resolve({ data: null }),
-    patientId ? supabaseAdmin.from("profiles").select("name, email, phone").eq("id", patientId).maybeSingle() : Promise.resolve({ data: null }),
+    patientId ? supabaseAdmin.from("profiles").select("name, email, phone, age, gender").eq("id", patientId).maybeSingle() : Promise.resolve({ data: null }),
     supabaseAdmin.from("prescription_items").select("*").eq("prescription_id", id)
   ]);
 
@@ -112,13 +112,19 @@ export default async function PrescriptionPage({ params }: PrescriptionPageProps
   }
 
   // Normalize each medicine item
-  medicinesList = (medicinesList || []).map((med: any) => ({
-    name: med.medication_name || med.medicineName || med.name || "Prescribed Medication",
-    dosage: med.dosage || "-",
-    frequency: med.frequency || med.instructions || "-",
-    duration: med.duration || "-",
-    instructions: med.instructions || med.frequency || "-"
-  }));
+  medicinesList = (medicinesList || []).map((med: any) => {
+    const rawFreq = med.frequency && med.frequency !== "-" ? med.frequency : "";
+    const rawInst = med.instructions && med.instructions !== "-" ? med.instructions : "";
+    return {
+      name: med.medication_name || med.medicineName || med.name || "Prescribed Medication",
+      dosage: med.dosage || "-",
+      frequency: rawFreq || "-",
+      duration: med.duration || "-",
+      instructions: (rawInst && rawInst !== rawFreq) ? rawInst : ""
+    };
+  });
+
+  const hasAnyInstructions = medicinesList.some((m: any) => Boolean(m.instructions));
 
   // Format clean diagnosis
   let cleanDiagnosis = presc.diagnosis || "General Consultation";
@@ -230,6 +236,7 @@ export default async function PrescriptionPage({ params }: PrescriptionPageProps
                       <th className="p-3 font-semibold text-slate-700 dark:text-slate-300">Dosage</th>
                       <th className="p-3 font-semibold text-slate-700 dark:text-slate-300">Frequency</th>
                       <th className="p-3 font-semibold text-slate-700 dark:text-slate-300">Duration</th>
+                      {hasAnyInstructions && <th className="p-3 font-semibold text-slate-700 dark:text-slate-300">Instructions</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -239,6 +246,7 @@ export default async function PrescriptionPage({ params }: PrescriptionPageProps
                         <td className="p-3 text-muted-foreground">{med.dosage || "-"}</td>
                         <td className="p-3 text-muted-foreground">{med.frequency || "-"}</td>
                         <td className="p-3 text-muted-foreground">{med.duration || "-"}</td>
+                        {hasAnyInstructions && <td className="p-3 text-muted-foreground">{med.instructions || "-"}</td>}
                       </tr>
                     ))}
                   </tbody>

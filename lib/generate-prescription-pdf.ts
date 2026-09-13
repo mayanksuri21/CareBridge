@@ -20,13 +20,16 @@ export function generatePrescriptionPDF(prescription: PrintablePrescription) {
   }[character] ?? character))
   
   const medicineList = Array.isArray(prescription.medicines) ? prescription.medicines : []
+  const hasAnyInstructions = medicineList.some((m: any) => m.instructions && m.instructions !== m.frequency)
+
   const rows = medicineList
     .map((medicine: any) => {
       const medName = medicine.medication_name || medicine.name || medicine.medicineName || "Prescribed Medicine"
       const dosage = medicine.dosage || "-"
-      const frequency = medicine.frequency || medicine.instructions || "-"
+      const frequency = medicine.frequency || "-"
       const duration = medicine.duration || "-"
-      return `<tr><td>${escapeHtml(medName)}</td><td>${escapeHtml(dosage)}</td><td>${escapeHtml(frequency)}</td><td>${escapeHtml(duration)}</td></tr>`
+      const instructions = (medicine.instructions && medicine.instructions !== medicine.frequency) ? medicine.instructions : "-"
+      return `<tr><td>${escapeHtml(medName)}</td><td>${escapeHtml(dosage)}</td><td>${escapeHtml(frequency)}</td><td>${escapeHtml(duration)}</td>${hasAnyInstructions ? `<td>${escapeHtml(instructions)}</td>` : ''}</tr>`
     })
     .join("")
     
@@ -88,6 +91,7 @@ export function generatePrescriptionPDF(prescription: PrintablePrescription) {
           <th>Dosage</th>
           <th>Frequency</th>
           <th>Duration</th>
+          ${hasAnyInstructions ? '<th>Instructions</th>' : ''}
         </tr>
       </thead>
       <tbody>
@@ -96,7 +100,7 @@ export function generatePrescriptionPDF(prescription: PrintablePrescription) {
     </table>
     <section class="notes">
       <div class="notes-title">Doctor Notes / Advice</div>
-      <p style="margin:0">${escapeHtml(adviceText)}</p>
+      <p style="margin:0; white-space: pre-wrap;">${escapeHtml(adviceText)}</p>
     </section>
     <div class="signature">
       <strong>${escapeHtml(doctorLabel)}</strong><br>

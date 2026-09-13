@@ -17,6 +17,7 @@ import { calculateAge } from "@/lib/utils";
 type MedicineInput = {
   name: string;
   dosage: string;
+  frequency: string;
   duration: string;
   instructions: string;
 };
@@ -108,7 +109,9 @@ export default function ConsultationRoom() {
   }, [appointment]);
 
   const [medicines, setMedicines] = useState<MedicineInput[]>([]);
-  const [medInput, setMedInput] = useState<MedicineInput>({ name: '', dosage: '', duration: '', instructions: '' });
+  const [medInput, setMedInput] = useState<MedicineInput>({ name: '', dosage: '', frequency: '', duration: '', instructions: '' });
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editRowInput, setEditRowInput] = useState<MedicineInput>({ name: '', dosage: '', frequency: '', duration: '', instructions: '' });
   const [sendingPrescription, setSendingPrescription] = useState(false);
   const [consultationPrescription, setConsultationPrescription] = useState<any>(null);
   const [isEditingPrescription, setIsEditingPrescription] = useState(false);
@@ -1377,11 +1380,32 @@ export default function ConsultationRoom() {
       return;
     }
     setMedicines([...medicines, { ...medInput }]);
-    setMedInput({ name: '', dosage: '', duration: '', instructions: '' });
+    setMedInput({ name: '', dosage: '', frequency: '', duration: '', instructions: '' });
   };
 
   const handleRemoveMedicine = (idx: number) => {
     setMedicines(medicines.filter((_, i) => i !== idx));
+    if (editingIndex === idx) setEditingIndex(null);
+  };
+
+  const handleStartEditMedicine = (idx: number) => {
+    setEditingIndex(idx);
+    setEditRowInput({ ...medicines[idx] });
+  };
+
+  const handleSaveEditMedicine = (idx: number) => {
+    if (!editRowInput.name || !editRowInput.dosage || !editRowInput.duration) {
+      toast.error("Please enter Medicine Name, Dosage, and Duration.");
+      return;
+    }
+    const updated = [...medicines];
+    updated[idx] = { ...editRowInput };
+    setMedicines(updated);
+    setEditingIndex(null);
+  };
+
+  const handleCancelEditMedicine = () => {
+    setEditingIndex(null);
   };
 
   const handleSaveAndFinalizePrescription = async () => {
@@ -1415,9 +1439,9 @@ export default function ConsultationRoom() {
       const medicationsFormatted = medicines.map((m) => ({
         medication_name: m.name,
         dosage: m.dosage,
-        frequency: m.instructions || "As directed",
+        frequency: m.frequency || "As directed",
         duration: m.duration || "5 days",
-        instructions: m.instructions || "Follow prescribed dosage",
+        instructions: m.instructions || "",
       }));
 
       const res = await fetch("/api/prescriptions", {
@@ -1895,15 +1919,18 @@ export default function ConsultationRoom() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-800 text-slate-300">
-                            {consultationPrescription.medicines.map((m: any, idx: number) => (
-                              <tr key={idx} className="hover:bg-slate-900/40">
-                                <td className="p-2.5 font-medium text-white">{m.medication_name || m.name || m.medicineName}</td>
-                                <td className="p-2.5 text-slate-400">{m.dosage || "-"}</td>
-                                <td className="p-2.5 text-slate-400">{m.frequency || "-"}</td>
-                                <td className="p-2.5 text-slate-400">{m.duration || "-"}</td>
-                                <td className="p-2.5 text-slate-400">{m.instructions || "-"}</td>
-                              </tr>
-                            ))}
+                            {consultationPrescription.medicines.map((m: any, idx: number) => {
+                              const inst = m.instructions && m.instructions !== m.frequency ? m.instructions : "-";
+                              return (
+                                <tr key={idx} className="hover:bg-slate-900/40">
+                                  <td className="p-2.5 font-medium text-white">{m.medication_name || m.name || m.medicineName}</td>
+                                  <td className="p-2.5 text-slate-400">{m.dosage || "-"}</td>
+                                  <td className="p-2.5 text-slate-400">{m.frequency || "-"}</td>
+                                  <td className="p-2.5 text-slate-400">{m.duration || "-"}</td>
+                                  <td className="p-2.5 text-slate-400">{inst}</td>
+                                </tr>
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
@@ -1914,7 +1941,7 @@ export default function ConsultationRoom() {
                     {consultationPrescription.advice && (
                       <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-3 text-xs">
                         <span className="text-slate-400 font-semibold block text-[10px] uppercase mb-1">Doctor&apos;s Advice &amp; Instructions:</span>
-                        <p className="text-slate-200">{consultationPrescription.advice}</p>
+                        <p className="text-slate-200 whitespace-pre-wrap">{consultationPrescription.advice}</p>
                       </div>
                     )}
                   </div>
@@ -2062,17 +2089,24 @@ export default function ConsultationRoom() {
                           <tr>
                             <th className="p-2">Medication</th>
                             <th className="p-2">Dosage</th>
+                            <th className="p-2">Frequency</th>
                             <th className="p-2">Duration</th>
+                            <th className="p-2">Instructions</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-800/80 text-slate-300">
-                          {consultationPrescription.medicines.map((m: any, idx: number) => (
-                            <tr key={idx} className="hover:bg-slate-900/40">
-                              <td className="p-2 font-medium text-white">{m.medication_name || m.name || m.medicineName}</td>
-                              <td className="p-2 text-slate-400">{m.dosage || "-"}</td>
-                              <td className="p-2 text-slate-400">{m.duration || m.frequency || "-"}</td>
-                            </tr>
-                          ))}
+                          {consultationPrescription.medicines.map((m: any, idx: number) => {
+                            const inst = m.instructions && m.instructions !== m.frequency ? m.instructions : "-";
+                            return (
+                              <tr key={idx} className="hover:bg-slate-900/40">
+                                <td className="p-2 font-medium text-white">{m.medication_name || m.name || m.medicineName}</td>
+                                <td className="p-2 text-slate-400">{m.dosage || "-"}</td>
+                                <td className="p-2 text-slate-400">{m.frequency || "-"}</td>
+                                <td className="p-2 text-slate-400">{m.duration || "-"}</td>
+                                <td className="p-2 text-slate-400">{inst}</td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -2081,7 +2115,7 @@ export default function ConsultationRoom() {
                   {consultationPrescription.advice && (
                     <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-3 text-xs">
                       <span className="text-slate-400 font-semibold block text-[10px] uppercase mb-1">Advice &amp; Instructions:</span>
-                      <p className="text-slate-200">{consultationPrescription.advice}</p>
+                      <p className="text-slate-200 whitespace-pre-wrap">{consultationPrescription.advice}</p>
                     </div>
                   )}
 
@@ -2094,8 +2128,9 @@ export default function ConsultationRoom() {
                           setMedicines(consultationPrescription.medicines.map((m: any) => ({
                             name: m.medication_name || m.name || m.medicineName || '',
                             dosage: m.dosage || '',
+                            frequency: m.frequency || '',
                             duration: m.duration || '',
-                            instructions: m.instructions || m.frequency || ''
+                            instructions: m.instructions || ''
                           })));
                         }
                         if (consultationPrescription.advice && !clinicalNotes) {
@@ -2136,44 +2171,60 @@ export default function ConsultationRoom() {
                   </div>
 
                   {/* Medication Inputs */}
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="space-y-1">
-                      <label className="text-[10px] text-slate-400 block font-medium">Medication Name</label>
-                      <input
-                        type="text"
-                        placeholder="e.g. Amoxicillin 500mg"
-                        value={medInput.name}
-                        onChange={(e) => setMedInput({ ...medInput, name: e.target.value })}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
-                      />
+                  <div className="space-y-2 text-xs">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 block font-medium">Medication Name</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Amoxicillin 500mg"
+                          value={medInput.name}
+                          onChange={(e) => setMedInput({ ...medInput, name: e.target.value })}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 block font-medium">Dosage</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. 1 Capsule"
+                          value={medInput.dosage}
+                          onChange={(e) => setMedInput({ ...medInput, dosage: e.target.value })}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
                     </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] text-slate-400 block font-medium">Dosage</label>
-                      <input
-                        type="text"
-                        placeholder="e.g. 1 Capsule"
-                        value={medInput.dosage}
-                        onChange={(e) => setMedInput({ ...medInput, dosage: e.target.value })}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
-                      />
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 block font-medium">Frequency</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Twice daily after meals"
+                          value={medInput.frequency}
+                          onChange={(e) => setMedInput({ ...medInput, frequency: e.target.value })}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 block font-medium">Duration</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. 5 days"
+                          value={medInput.duration}
+                          onChange={(e) => setMedInput({ ...medInput, duration: e.target.value })}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
                     </div>
+
                     <div className="space-y-1">
-                      <label className="text-[10px] text-slate-400 block font-medium">Frequency / Instructions</label>
+                      <label className="text-[10px] text-slate-400 block font-medium">Special Instructions</label>
                       <input
                         type="text"
-                        placeholder="e.g. Twice daily after meals"
+                        placeholder="e.g. Take with plenty of water (optional)"
                         value={medInput.instructions}
                         onChange={(e) => setMedInput({ ...medInput, instructions: e.target.value })}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] text-slate-400 block font-medium">Duration</label>
-                      <input
-                        type="text"
-                        placeholder="e.g. 5 days"
-                        value={medInput.duration}
-                        onChange={(e) => setMedInput({ ...medInput, duration: e.target.value })}
                         className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
                       />
                     </div>
@@ -2187,35 +2238,118 @@ export default function ConsultationRoom() {
                     <Plus className="w-3.5 h-3.5 text-indigo-400" /> Add Medication
                   </button>
 
-                  {/* Medicines List Table */}
+                  {/* Medicines List Table with Inline Editing */}
                   {medicines.length > 0 && (
-                    <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950/80 max-h-36 overflow-y-auto">
+                    <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950/80 max-h-48 overflow-y-auto">
                       <table className="w-full text-xs text-left">
                         <thead className="bg-slate-900/90 text-slate-400 text-[10px] uppercase font-semibold">
                           <tr>
                             <th className="p-2">Medication</th>
-                            <th className="p-2">Dosage</th>
+                            <th className="p-2">Dosage / Freq</th>
                             <th className="p-2">Duration</th>
-                            <th className="p-2 text-right">Action</th>
+                            <th className="p-2 text-right">Actions</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-800/80 text-slate-300">
-                          {medicines.map((m, idx) => (
-                            <tr key={idx} className="hover:bg-slate-900/40">
-                              <td className="p-2 font-medium text-white">{m.name}</td>
-                              <td className="p-2 text-slate-400">{m.dosage}</td>
-                              <td className="p-2 text-slate-400">{m.duration}</td>
-                              <td className="p-2 text-right">
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemoveMedicine(idx)}
-                                  className="p-1 text-rose-400 hover:bg-rose-950/60 rounded cursor-pointer transition"
-                                >
-                                  <Trash className="w-3.5 h-3.5" />
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
+                          {medicines.map((m, idx) => {
+                            if (editingIndex === idx) {
+                              return (
+                                <tr key={idx} className="bg-slate-900/90 p-2">
+                                  <td colSpan={4} className="p-2 space-y-2">
+                                    <div className="grid grid-cols-2 gap-1.5">
+                                      <input
+                                        type="text"
+                                        placeholder="Medicine Name"
+                                        value={editRowInput.name}
+                                        onChange={(e) => setEditRowInput({ ...editRowInput, name: e.target.value })}
+                                        className="bg-slate-950 border border-indigo-500/50 rounded px-2 py-1 text-xs text-white"
+                                      />
+                                      <input
+                                        type="text"
+                                        placeholder="Dosage"
+                                        value={editRowInput.dosage}
+                                        onChange={(e) => setEditRowInput({ ...editRowInput, dosage: e.target.value })}
+                                        className="bg-slate-950 border border-indigo-500/50 rounded px-2 py-1 text-xs text-white"
+                                      />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-1.5">
+                                      <input
+                                        type="text"
+                                        placeholder="Frequency"
+                                        value={editRowInput.frequency}
+                                        onChange={(e) => setEditRowInput({ ...editRowInput, frequency: e.target.value })}
+                                        className="bg-slate-950 border border-indigo-500/50 rounded px-2 py-1 text-xs text-white"
+                                      />
+                                      <input
+                                        type="text"
+                                        placeholder="Duration"
+                                        value={editRowInput.duration}
+                                        onChange={(e) => setEditRowInput({ ...editRowInput, duration: e.target.value })}
+                                        className="bg-slate-950 border border-indigo-500/50 rounded px-2 py-1 text-xs text-white"
+                                      />
+                                    </div>
+                                    <input
+                                      type="text"
+                                      placeholder="Special Instructions"
+                                      value={editRowInput.instructions}
+                                      onChange={(e) => setEditRowInput({ ...editRowInput, instructions: e.target.value })}
+                                      className="w-full bg-slate-950 border border-indigo-500/50 rounded px-2 py-1 text-xs text-white"
+                                    />
+                                    <div className="flex justify-end gap-1.5 pt-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSaveEditMedicine(idx)}
+                                        className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                                      >
+                                        <Check className="w-3 h-3" /> Save Row
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={handleCancelEditMedicine}
+                                        className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                                      >
+                                        <X className="w-3 h-3" /> Cancel
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            }
+
+                            return (
+                              <tr key={idx} className="hover:bg-slate-900/40">
+                                <td className="p-2 font-medium text-white">
+                                  <div>{m.name}</div>
+                                  {m.instructions && m.instructions !== m.frequency && (
+                                    <div className="text-[10px] text-teal-400/80 italic">{m.instructions}</div>
+                                  )}
+                                </td>
+                                <td className="p-2 text-slate-400">
+                                  <div>{m.dosage}</div>
+                                  {m.frequency && <div className="text-[10px] text-slate-500">{m.frequency}</div>}
+                                </td>
+                                <td className="p-2 text-slate-400">{m.duration}</td>
+                                <td className="p-2 text-right space-x-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleStartEditMedicine(idx)}
+                                    title="Edit medication"
+                                    className="p-1 text-indigo-400 hover:bg-indigo-950/60 rounded cursor-pointer transition inline-block"
+                                  >
+                                    <Edit3 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveMedicine(idx)}
+                                    title="Delete medication"
+                                    className="p-1 text-rose-400 hover:bg-rose-950/60 rounded cursor-pointer transition inline-block"
+                                  >
+                                    <Trash className="w-3.5 h-3.5" />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>

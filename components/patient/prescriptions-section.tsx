@@ -80,7 +80,7 @@ export function PatientPrescriptionsSection({ fallbackPrescriptions = [] }: Pati
               </div>
             </div>
           </CardHeader>
-          <CardContent className="text-sm text-muted-foreground" suppressHydrationWarning>
+          <CardContent className="text-sm text-muted-foreground whitespace-pre-wrap" suppressHydrationWarning>
             {prescription.instructions || prescription.advice || "Follow prescribed dosage"}
           </CardContent>
         </Card>
