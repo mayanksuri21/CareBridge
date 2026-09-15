@@ -120,6 +120,9 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
 
       filteredList = filteredList.map((appt: any) => {
         const reasonStr = appt.reason || '';
+        const isPaid = appt.payment_status === 'paid' || reasonStr.includes('[PAYMENT_PAID]');
+        const paymentStatus = isPaid ? 'paid' : (appt.payment_status === 'pending' || reasonStr.includes('[PAYMENT_PENDING]') ? 'pending' : 'pending');
+
         const isDeclinedText = reasonStr.includes('Declined:') || reasonStr.includes('[PATIENT_DECLINED]');
         const isCancelledOrDeclined = appt.status === 'cancelled' || appt.status === 'rejected' || appt.status === 'declined' || isDeclinedText;
 
@@ -130,7 +133,7 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
         const isPendingApproval = reasonStr.includes('[PENDING_APPROVAL]');
 
         let cleanReason = reasonStr;
-        ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]'].forEach(tag => {
+        ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]', '[PAYMENT_PAID]', '[PAYMENT_PENDING]', '[ARCHIVED_BY_DOCTOR]'].forEach(tag => {
           cleanReason = cleanReason.replace(` ${tag}`, '').replace(tag, '');
         });
 
@@ -162,6 +165,7 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
 
         return {
           ...appt,
+          payment_status: paymentStatus,
           status: statusVal,
           reason: cleanReason,
           scheduled_date: parsedDate,
@@ -317,12 +321,14 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
   };
 
   const handleStartConsultation = async (appointmentId: string) => {
+    console.log("[handleStartConsultation] Starting/Rejoining consultation for appointmentId:", appointmentId);
     try {
-      await fetch('/api/appointments/call', {
+      const res = await fetch('/api/appointments/call', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ appointment_id: appointmentId, action: 'start' }),
       });
+      console.log("[handleStartConsultation] /api/appointments/call response:", res.status);
     } catch (e) {
       console.error("Failed to signal doctor start:", e);
     }
@@ -522,6 +528,15 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
                           <CheckCircle2 className="w-3 h-3" /> Confirmed
                         </span>
                       )}
+                      {req.payment_status === "paid" ? (
+                        <span className="text-[11px] px-2.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-400/50 font-bold flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-400" /> Payment Received ✓
+                        </span>
+                      ) : (
+                        <span className="text-[11px] px-2.5 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/30 font-medium flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-amber-400" /> Payment Pending
+                        </span>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-4 text-xs text-slate-300">
@@ -535,6 +550,13 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
                       </span>
                     </div>
 
+                    {req.payment_status === "paid" && (
+                      <p className="text-xs text-emerald-300 bg-emerald-955/40 p-2.5 rounded-lg border border-emerald-500/40 font-semibold flex items-center gap-2 mt-1">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        Patient has paid the consultation fee. You can now start the consultation.
+                      </p>
+                    )}
+
                     <p className="text-xs text-slate-300 bg-slate-950/80 p-2.5 rounded-lg border border-slate-800/70 mt-1">
                       <strong className="text-slate-400">Reason:</strong> {req.reason || "General Consultation"}
                       {req.symptoms ? ` | Symptoms: ${req.symptoms}` : ""}
@@ -544,12 +566,22 @@ export function PendingRequestsPanel({ doctorId }: { doctorId?: string }) {
                   <div className="flex flex-wrap items-center gap-2">
                     {!isPast && (
                       <>
-                        <Button
-                          onClick={() => handleStartConsultation(req.id)}
-                          className="px-5 py-2.5 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.3)] flex items-center justify-center gap-2 transition cursor-pointer"
-                        >
-                          <Video className="w-4 h-4" /> {req.status === 'in_progress' || req.is_doctor_in_room || req.reason?.includes('[DOCTOR_IN_ROOM]') ? "Rejoin Consultation" : "Start Consultation"}
-                        </Button>
+                        {req.payment_status === "paid" ? (
+                          <Button
+                            onClick={() => handleStartConsultation(req.id)}
+                            className="px-5 py-2.5 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.3)] flex items-center justify-center gap-2 transition cursor-pointer"
+                          >
+                            <Video className="w-4 h-4" /> {req.status === 'in_progress' || req.is_doctor_in_room || req.reason?.includes('[DOCTOR_IN_ROOM]') ? "Rejoin Consultation" : "Start Consultation"}
+                          </Button>
+                        ) : (
+                          <Button
+                            disabled
+                            className="px-4 py-2.5 rounded-xl text-xs font-semibold bg-slate-900 text-amber-400 border border-amber-500/30 cursor-not-allowed flex items-center justify-center gap-2"
+                          >
+                            <Clock className="w-3.5 h-3.5 text-amber-400" />
+                            Waiting for patient payment
+                          </Button>
+                        )}
                         <Button
                           type="button"
                           variant="outline"

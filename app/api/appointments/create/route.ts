@@ -210,6 +210,18 @@ export async function POST(request: Request) {
       );
     }
 
+    // Update patient profile phone if provided so profile becomes single source of truth
+    if (body.patient_id && body.phone) {
+      try {
+        await supabase
+          .from("profiles")
+          .update({ phone: String(body.phone).trim() })
+          .eq("id", body.patient_id);
+      } catch (profErr) {
+        console.warn("Backend profile phone sync error:", profErr);
+      }
+    }
+
     const responseAppointment = {
       id: appointmentId,
       patient_id: body.patient_id || null,

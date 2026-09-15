@@ -78,6 +78,9 @@ export async function POST(request: Request) {
     if (action === 'start') {
       reasonText = `${cleanReason} [DOCTOR_IN_ROOM] [CALL_ACTIVE]`;
       statusText = 'in_progress';
+    } else if (action === 'leave_doctor') {
+      reasonText = `${cleanReason} [CALL_ACTIVE]`;
+      statusText = 'in_progress';
     } else if (action === 'join_waiting') {
       reasonText = `${cleanReason} [PATIENT_WAITING] [CALL_ACTIVE]`;
       statusText = 'booked';

@@ -18,14 +18,9 @@ envContent.split('\n').forEach(line => {
 
 const supabase = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
 
-async function inspect() {
-  console.log("Supabase URL:", env.NEXT_PUBLIC_SUPABASE_URL);
-
-  // Check if we can select from information_schema via RPC or direct query
-  const { data: cols, error: cErr } = await supabase.from('appointments').select('*').limit(1);
-  console.log("Appointments sample:", cols ? Object.keys(cols[0] || {}) : null, cErr);
-
-  const { data: docCols, error: dErr } = await supabase.from('doctors').select('*').limit(1);
-  console.log("Doctors sample:", docCols ? Object.keys(docCols[0] || {}) : null, dErr);
+async function check() {
+  const res = await supabase.from('appointments').select('id, payment_status').limit(1);
+  console.log("Result selecting payment_status:", JSON.stringify(res, null, 2));
 }
-inspect();
+
+check();

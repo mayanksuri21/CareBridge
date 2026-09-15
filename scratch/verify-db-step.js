@@ -18,14 +18,24 @@ envContent.split('\n').forEach(line => {
 
 const supabase = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
 
-async function inspect() {
-  console.log("Supabase URL:", env.NEXT_PUBLIC_SUPABASE_URL);
+async function verify() {
+  const { data: paymentsData, error: paymentsErr } = await supabase
+    .from('payments')
+    .select('*')
+    .limit(1);
 
-  // Check if we can select from information_schema via RPC or direct query
-  const { data: cols, error: cErr } = await supabase.from('appointments').select('*').limit(1);
-  console.log("Appointments sample:", cols ? Object.keys(cols[0] || {}) : null, cErr);
+  if (paymentsErr) {
+    console.log("PAYMENTS TABLE STATUS: NOT FOUND", paymentsErr.message);
+  } else {
+    console.log("PAYMENTS TABLE STATUS: EXISTS!");
+    console.log("Sample columns:", paymentsData);
+  }
 
-  const { data: docCols, error: dErr } = await supabase.from('doctors').select('*').limit(1);
-  console.log("Doctors sample:", docCols ? Object.keys(docCols[0] || {}) : null, dErr);
+  const { data: apptData } = await supabase
+    .from('appointments')
+    .select('payment_status')
+    .limit(1);
+  console.log("APPOINTMENTS payment_status column check:", apptData);
 }
-inspect();
+
+verify();

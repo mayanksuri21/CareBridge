@@ -3,7 +3,8 @@ import type { User } from '@supabase/supabase-js'
 
 export interface UserProfile {
   id: string
-  name?: string  
+  name?: string
+  phone?: string
   avatar_url?: string
   role?: string
   created_at?: string
@@ -15,7 +16,7 @@ export async function getUserProfile(user: User): Promise<UserProfile | null> {
   try {
     const { data: profile, error } = await supabase
       .from('profiles')
-      .select('id, name, avatar_url, role, created_at, updated_at')
+      .select('id, name, phone, avatar_url, role, created_at, updated_at')
       .eq('id', user.id)
       .single()
 

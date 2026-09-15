@@ -43,6 +43,7 @@ export async function GET(request: Request) {
         patient_id,
         slot_id,
         status,
+        payment_status,
         reason,
         created_at,
         appointment_date,
@@ -63,15 +64,54 @@ export async function GET(request: Request) {
       .in('status', ['pending', 'booked', 'scheduled', 'cancelled'])
       .order('created_at', { ascending: false });
 
-    if (doctorId) {
-      query = query.or(`doctor_id.eq.${doctorId},doctor_id.is.null`);
-    }
+    let data: any[] | null = null;
+    const primaryResult = await query;
+    if (primaryResult.error) {
+      console.warn("Primary doctor appointments query error (falling back without payment_status):", primaryResult.error.message);
+      let fallbackQuery = supabase
+        .from('appointments')
+        .select(`
+          id,
+          doctor_id,
+          patient_id,
+          slot_id,
+          status,
+          reason,
+          created_at,
+          appointment_date,
+          time_slot,
+          schedule_slots:slot_id (
+            start_time,
+            end_time
+          ),
+          patient_name,
+          patient_email,
+          patient:profiles!patient_id (
+            id,
+            name,
+            email,
+            phone
+          )
+        `)
+        .in('status', ['pending', 'booked', 'scheduled', 'cancelled'])
+        .order('created_at', { ascending: false });
 
-    const { data, error } = await query;
-    if (error) throw error;
+      if (doctorId) {
+        fallbackQuery = fallbackQuery.or(`doctor_id.eq.${doctorId},doctor_id.is.null`);
+      }
+
+      const fallbackResult = await fallbackQuery;
+      if (fallbackResult.error) throw fallbackResult.error;
+      data = fallbackResult.data;
+    } else {
+      data = primaryResult.data;
+    }
 
     const mapped = (data || []).map((appt: any) => {
       const reasonStr = appt.reason || '';
+      const isPaid = appt.payment_status === 'paid' || reasonStr.includes('[PAYMENT_PAID]');
+      const paymentStatus = isPaid ? 'paid' : (appt.payment_status === 'pending' || reasonStr.includes('[PAYMENT_PENDING]') ? 'pending' : 'pending');
+
       const isPatientDeclined = reasonStr.includes('[PATIENT_DECLINED]');
       const isDeclinedText = reasonStr.includes('Declined:') || isPatientDeclined;
       const isCancelledOrDeclined = appt.status === 'cancelled' || appt.status === 'rejected' || appt.status === 'declined' || isDeclinedText;
@@ -83,7 +123,7 @@ export async function GET(request: Request) {
       const isPendingApprovalTag = reasonStr.includes('[PENDING_APPROVAL]');
 
       let cleanReason = reasonStr;
-      ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]'].forEach(tag => {
+      ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]', '[PAYMENT_PAID]', '[PAYMENT_PENDING]', '[ARCHIVED_BY_DOCTOR]'].forEach(tag => {
         cleanReason = cleanReason.replace(` ${tag}`, '').replace(tag, '');
       });
 
@@ -123,6 +163,7 @@ export async function GET(request: Request) {
 
       return {
         ...appt,
+        payment_status: paymentStatus,
         status: statusVal,
         call_active: isCallActive || isDoctorInRoom || isPatientWaiting || isPatientAdmitted,
         reason: cleanReason,

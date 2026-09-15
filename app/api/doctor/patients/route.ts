@@ -22,12 +22,12 @@ export async function GET(request: Request) {
 
     const supabase = getAdminClient();
 
-    // 1. Fetch appointments for this doctor to find all associated patients
+    // 1. Fetch appointments for this doctor including real schedule_slots start_time
     const { data: appts, error: apptErr } = await supabase
       .from('appointments')
-      .select('id, patient_id, patient_name, scheduled_at, status, symptoms, reason, appointment_date')
+      .select('id, patient_id, patient_name, patient_email, phone, status, symptoms, reason, appointment_date, scheduled_at, created_at, slot_id, schedule_slots:slot_id(start_time)')
       .eq('doctor_id', doctorId)
-      .order('scheduled_at', { ascending: false });
+      .order('created_at', { ascending: false });
 
     if (apptErr) throw apptErr;
 
@@ -38,7 +38,7 @@ export async function GET(request: Request) {
       .eq('doctor_id', doctorId)
       .order('created_at', { ascending: false });
 
-    // 3. Fetch patient profiles
+    // 3. Fetch patient profiles using valid existing columns
     const patientIds = Array.from(new Set([
       ...(appts || []).map(a => a.patient_id),
       ...(prescriptions || []).map(p => p.patient_id)
@@ -48,7 +48,7 @@ export async function GET(request: Request) {
     if (patientIds.length > 0) {
       const { data: profiles } = await supabase
         .from('profiles')
-        .select('id, name, email, age, gender, blood_group, phone, date_of_birth')
+        .select('id, name, email, phone, role, avatar_url')
         .in('id', patientIds);
 
       (profiles || []).forEach(p => {
@@ -63,48 +63,65 @@ export async function GET(request: Request) {
       const pid = a.patient_id || 'unknown';
       const prof = profilesMap[pid] || {};
       
-      const dynamicAge = calculateAge(prof.date_of_birth);
-      const computedAge = dynamicAge !== null ? dynamicAge : (prof.age || 'N/A');
+      const slotData: any = a.schedule_slots;
+      const apptStartTime = (Array.isArray(slotData) ? slotData[0]?.start_time : slotData?.start_time) || a.scheduled_at || null;
+      const formattedAppt = {
+        ...a,
+        scheduled_at: apptStartTime,
+      };
+
+      const resolvedName = prof.name || a.patient_name || 'Anonymous Patient';
+      const resolvedEmail = prof.email || a.patient_email || 'Not provided';
+      const resolvedPhone = prof.phone || a.phone || 'Not provided';
 
       if (!patientMap[pid]) {
         patientMap[pid] = {
           patient_id: pid,
-          name: prof.name || a.patient_name || 'Anonymous Patient',
-          email: prof.email || 'No email provided',
-          age: computedAge,
-          gender: prof.gender || 'N/A',
-          blood_group: prof.blood_group || 'N/A',
-          phone: prof.phone || 'N/A',
+          name: resolvedName,
+          email: resolvedEmail,
+          age: 'Not collected',
+          gender: 'Not collected',
+          blood_group: 'Not collected',
+          phone: resolvedPhone,
           total_visits: 0,
-          last_visit: a.scheduled_at || a.appointment_date,
+          last_visit: apptStartTime || a.created_at,
           appointments: [],
           prescriptions: []
         };
+      } else {
+        if (patientMap[pid].name === 'Anonymous Patient' && resolvedName !== 'Anonymous Patient') {
+          patientMap[pid].name = resolvedName;
+        }
+        if (patientMap[pid].email === 'Not provided' && resolvedEmail !== 'Not provided') {
+          patientMap[pid].email = resolvedEmail;
+        }
+        if (patientMap[pid].phone === 'Not provided' && resolvedPhone !== 'Not provided') {
+          patientMap[pid].phone = resolvedPhone;
+        }
       }
 
       patientMap[pid].total_visits += 1;
-      if ((patientMap[pid].name === 'Anonymous Patient' || !patientMap[pid].name) && a.patient_name) {
-        patientMap[pid].name = a.patient_name;
-      }
-      patientMap[pid].appointments.push(a);
+      patientMap[pid].appointments.push(formattedAppt);
     });
 
     (prescriptions || []).forEach(p => {
       const pid = p.patient_id;
       if (!pid) return;
 
+      const prof = profilesMap[pid] || {};
+      const resolvedName = prof.name || 'Anonymous Patient';
+      const resolvedEmail = prof.email || 'Not provided';
+      const resolvedPhone = prof.phone || 'Not provided';
+
       if (!patientMap[pid]) {
-        const prof = profilesMap[pid] || {};
-        const dynamicAge = calculateAge(prof.date_of_birth);
-        const computedAge = dynamicAge !== null ? dynamicAge : (prof.age || 'N/A');
         patientMap[pid] = {
           patient_id: pid,
-          name: prof.name || 'Anonymous Patient',
-          email: prof.email || 'No email provided',
-          age: computedAge,
-          gender: prof.gender || 'N/A',
-          blood_group: prof.blood_group || 'N/A',
-          phone: prof.phone || 'N/A',
+          name: resolvedName,
+          email: resolvedEmail,
+          age: 'Not collected',
+          gender: 'Not collected',
+          blood_group: 'Not collected',
+          phone: resolvedPhone,
           total_visits: 0,
           last_visit: p.created_at,
           appointments: [],
@@ -144,13 +161,26 @@ export async function GET(request: Request) {
 
     let results = Object.values(patientMap);
 
+    // Sort patient history appointments descending by actual start_time (most recent first)
+    results.forEach((p: any) => {
+      p.appointments.sort((a: any, b: any) => {
+        const timeA = a.scheduled_at ? new Date(a.scheduled_at).getTime() : 0;
+        const timeB = b.scheduled_at ? new Date(b.scheduled_at).getTime() : 0;
+        return timeB - timeA;
+      });
+      p.prescriptions.sort((a: any, b: any) => {
+        const timeA = new Date(a.created_at).getTime();
+        const timeB = new Date(b.created_at).getTime();
+        return timeB - timeA;
+      });
+    });
+
     // Apply search filter if query is present
     if (query) {
       results = results.filter(
         (p: any) =>
           p.name.toLowerCase().includes(query) ||
           p.email.toLowerCase().includes(query) ||
-          p.blood_group.toLowerCase().includes(query) ||
           p.patient_id.toLowerCase().includes(query)
       );
     }

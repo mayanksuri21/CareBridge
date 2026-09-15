@@ -19,6 +19,9 @@ export async function GET(request: Request) {
 
     const formatted = (data || []).map((appt: any) => {
       const reasonStr = appt.reason || '';
+      const isPaid = appt.payment_status === 'paid' || reasonStr.includes('[PAYMENT_PAID]');
+      const paymentStatus = isPaid ? 'paid' : (appt.payment_status === 'pending' || reasonStr.includes('[PAYMENT_PENDING]') ? 'pending' : 'pending');
+
       const isDeclined = appt.status === 'cancelled' || appt.status === 'rejected' || appt.status === 'declined' || reasonStr.includes('Declined:') || reasonStr.includes('[PATIENT_DECLINED]');
       const isCompleted = appt.status === 'completed';
       const isMissed = appt.status === 'missed';
@@ -28,6 +31,11 @@ export async function GET(request: Request) {
       const isPatientWaiting = !isTerminated && reasonStr.includes('[PATIENT_WAITING]');
       const isPatientAdmitted = !isTerminated && reasonStr.includes('[PATIENT_ADMITTED]');
       const isCallActive = !isTerminated && (reasonStr.includes('[CALL_ACTIVE]') || isDoctorInRoom);
+
+      let cleanReason = reasonStr;
+      ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]', '[PAYMENT_PAID]', '[PAYMENT_PENDING]', '[ARCHIVED_BY_DOCTOR]'].forEach(tag => {
+        cleanReason = cleanReason.replace(` ${tag}`, '').replace(tag, '');
+      });
 
       let statusVal = appt.status;
       if (isDeclined) {
@@ -42,6 +50,8 @@ export async function GET(request: Request) {
 
       return {
         ...appt,
+        payment_status: paymentStatus,
+        reason: cleanReason,
         roomId: appt.id,
         appointment_id: appt.id,
         is_doctor_in_room: isDoctorInRoom,

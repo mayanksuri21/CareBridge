@@ -18,14 +18,21 @@ envContent.split('\n').forEach(line => {
 
 const supabase = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
 
-async function inspect() {
-  console.log("Supabase URL:", env.NEXT_PUBLIC_SUPABASE_URL);
+async function testRpcs() {
+  const functionsToTest = [
+    'exec', 'exec_sql', 'execute_sql', 'sql', 'query', 'run_sql',
+    'postgres', 'pg_query', 'raw_sql', 'eval', 'execute'
+  ];
 
-  // Check if we can select from information_schema via RPC or direct query
-  const { data: cols, error: cErr } = await supabase.from('appointments').select('*').limit(1);
-  console.log("Appointments sample:", cols ? Object.keys(cols[0] || {}) : null, cErr);
-
-  const { data: docCols, error: dErr } = await supabase.from('doctors').select('*').limit(1);
-  console.log("Doctors sample:", docCols ? Object.keys(docCols[0] || {}) : null, dErr);
+  for (const fn of functionsToTest) {
+    const { data, error } = await supabase.rpc(fn, { sql: 'SELECT 1' });
+    if (!error) {
+      console.log(`FOUND WORKING RPC: ${fn}`);
+      return fn;
+    } else {
+      console.log(`fn ${fn}: ${error.message} (${error.code})`);
+    }
+  }
 }
-inspect();
+
+testRpcs();

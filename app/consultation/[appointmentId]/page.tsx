@@ -142,6 +142,10 @@ export default function ConsultationRoom() {
   const [showDoctorEndModal, setShowDoctorEndModal] = useState(false);
   const [isEndingCall, setIsEndingCall] = useState(false);
 
+  // In-Room Patient History & Previous Prescription State (Doctor Only)
+  const [lastPrescription, setLastPrescription] = useState<any | null>(null);
+  const [loadingLastPrescription, setLoadingLastPrescription] = useState<boolean>(false);
+
   // Helper to normalize appointment tags into structured properties
   const normalizeAppointment = useCallback((appt: any) => {
     if (!appt) return null;
@@ -153,9 +157,10 @@ export default function ConsultationRoom() {
     const isCallActive = reasonStr.includes('[CALL_ACTIVE]') || Boolean(appt.call_active);
 
     let cleanReason = reasonStr;
-    ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]'].forEach(tag => {
+    ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]', '[PAYMENT_PAID]', '[PAYMENT_PENDING]', '[ARCHIVED_BY_DOCTOR]'].forEach(tag => {
       cleanReason = cleanReason.replace(` ${tag}`, '').replace(tag, '');
     });
+    cleanReason = cleanReason.replace(/\[[A-Z_]+\]/g, '').trim();
 
     return {
       ...appt,
@@ -173,32 +178,39 @@ export default function ConsultationRoom() {
   }, []);
 
   // 1. Fetch current user and profile role directly from profiles table (single source of truth)
-  useEffect(() => {
-    async function fetchUserAndRole() {
-      try {
-        const user = authUser || (await supabase.auth.getUser()).data?.user;
-        if (user) {
-          setCurrentUser(user);
+  const fetchUserAndRole = useCallback(async () => {
+    try {
+      console.log("[fetchUserAndRole] Starting user/role fetch. authUser id:", authUser?.id);
+      const user = authUser || (await supabase.auth.getUser()).data?.user;
+      console.log("[fetchUserAndRole] Resolved user id:", user?.id, "email:", user?.email);
+      if (user) {
+        setCurrentUser(user);
 
-          // Authoritative profile role query from DB (profiles.role)
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("role")
-            .eq("id", user.id)
-            .maybeSingle();
+        // Authoritative profile role query from DB (profiles.role)
+        const { data: profile, error: profErr } = await supabase
+          .from("profiles")
+          .select("role")
+          .eq("id", user.id)
+          .maybeSingle();
 
-          setUserRole(profile?.role || null);
-        }
-      } catch (err) {
-        console.warn("Could not fetch user/role in consultation room:", err);
-      } finally {
-        setLoadingUser(false);
+        console.log("[fetchUserAndRole] Profile query for user.id =", user.id, "-> profile:", profile, "error:", profErr);
+        const resolvedRole = profile?.role || user.user_metadata?.role || authUser?.user_metadata?.role || null;
+        setUserRole(resolvedRole);
+      } else {
+        console.warn("[fetchUserAndRole] No user found! authUser is null");
       }
+    } catch (err) {
+      console.warn("Could not fetch user/role in consultation room:", err);
+    } finally {
+      setLoadingUser(false);
     }
+  }, [authUser, supabase]);
+
+  useEffect(() => {
     if (!authLoading) {
       fetchUserAndRole();
     }
-  }, [supabase, authUser, authLoading]);
+  }, [authLoading, fetchUserAndRole]);
 
   // Safety timeout: Ensure loading screen never hangs indefinitely
   useEffect(() => {
@@ -375,7 +387,7 @@ export default function ConsultationRoom() {
     appointment.doctor_id &&
     currentUser.id === appointment.doctor_id
   );
-  const isDoctorRole = userRole === 'doctor';
+  const isDoctorRole = userRole === 'doctor' || authUser?.user_metadata?.role === 'doctor' || currentUser?.user_metadata?.role === 'doctor';
   const isDoctor = Boolean(isDoctorById || isDoctorRole);
   const isPatient = !isDoctor;
 
@@ -399,6 +411,32 @@ export default function ConsultationRoom() {
       }
     }
   }, [isDoctor, appointment, authLoading]);
+
+  // Fetch most recent previous prescription for this patient (excluding current session)
+  useEffect(() => {
+    if (!isDoctor || !appointment?.patient_id) return;
+    let isMounted = true;
+    setLoadingLastPrescription(true);
+
+    fetch(`/api/prescriptions?patient_id=${appointment.patient_id}`, { cache: 'no-store' })
+      .then((res) => res.json())
+      .then((data) => {
+        if (!isMounted) return;
+        const list = data?.prescriptions || [];
+        const previous = list.filter((p: any) => p.appointment_id !== roomId && p.id !== consultationPrescription?.id);
+        if (previous.length > 0) {
+          setLastPrescription(previous[0]);
+        } else {
+          setLastPrescription(null);
+        }
+      })
+      .catch((err) => console.warn("Failed to fetch last prescription:", err))
+      .finally(() => {
+        if (isMounted) setLoadingLastPrescription(false);
+      });
+
+    return () => { isMounted = false; };
+  }, [isDoctor, appointment?.patient_id, roomId, consultationPrescription?.id]);
 
   const loading = (authLoading && !currentUser) || (loadingUser && !currentUser) || loadingAppt;
 
@@ -617,15 +655,22 @@ export default function ConsultationRoom() {
       if (!trackOrPub) return;
       const track = trackOrPub.track || trackOrPub;
       if (!track) return;
-      const kind = (track.kind || trackOrPub.kind || '').toString().toLowerCase();
+      const kind = String(track.kind || trackOrPub.kind || '').toLowerCase();
+
+      setHasRemoteParticipant(true);
 
       if (kind === 'video') {
         console.log("[WebRTC] [RemoteTrack] Attaching remote video track from:", participant?.identity);
+        setHasRemoteVideo(true);
         const tryAttachVideo = (attemptsLeft = 12) => {
           const el = remoteVideoRef.current || (document.getElementById('remote-video') as HTMLVideoElement);
           if (el) {
             try {
               track.attach(el);
+              const mediaTrack = track.mediaStreamTrack || (track.track instanceof MediaStreamTrack ? track.track : null);
+              if (mediaTrack && (!el.srcObject || (el.srcObject as MediaStream).getVideoTracks()[0] !== mediaTrack)) {
+                el.srcObject = new MediaStream([mediaTrack]);
+              }
               el.muted = true; // Video element MUST remain muted to guarantee instant browser autoplay
               el.playsInline = true;
               el.play().catch((err: any) => console.warn("[WebRTC] Remote video play notice:", err));
@@ -644,26 +689,20 @@ export default function ConsultationRoom() {
         try {
           const participantId = participant?.identity || participant?.sid || 'remote';
           const audioId = `remote-audio-${participantId}`;
-          const existingAudio = document.getElementById(audioId);
-          if (existingAudio) existingAudio.remove();
-
-          const audioEl = track.attach();
-          audioEl.id = audioId;
-          audioEl.style.display = 'none';
-          document.body.appendChild(audioEl);
-          const playPromise = audioEl.play();
-          if (playPromise !== undefined) {
-            playPromise.catch((err: any) => {
-              console.warn("[WebRTC] Remote audio autoplay blocked by browser policy, waiting for user interaction:", err);
-              const resumeAudio = () => {
-                audioEl.play().catch(() => { });
-                window.removeEventListener('click', resumeAudio);
-                window.removeEventListener('keydown', resumeAudio);
-              };
-              window.addEventListener('click', resumeAudio, { once: true });
-              window.addEventListener('keydown', resumeAudio, { once: true });
-            });
+          let audioEl = document.getElementById(audioId) as HTMLAudioElement;
+          if (!audioEl) {
+            audioEl = document.createElement('audio');
+            audioEl.id = audioId;
+            audioEl.autoplay = true;
+            audioEl.style.display = 'none';
+            document.body.appendChild(audioEl);
           }
+          track.attach(audioEl);
+          const mediaTrack = track.mediaStreamTrack || (track.track instanceof MediaStreamTrack ? track.track : null);
+          if (mediaTrack && (!audioEl.srcObject || (audioEl.srcObject as MediaStream).getAudioTracks()[0] !== mediaTrack)) {
+            audioEl.srcObject = new MediaStream([mediaTrack]);
+          }
+          audioEl.play().catch((err) => console.warn("[WebRTC] Remote audio autoplay notice:", err));
         } catch (audioErr) {
           console.error("[WebRTC] Error attaching remote audio track:", audioErr);
         }
@@ -684,16 +723,21 @@ export default function ConsultationRoom() {
 
       activeRoom.remoteParticipants.forEach((participant) => {
         console.log("[WebRTC] [Sync] Scanning remote participant:", participant.identity);
-        participant.trackPublications.forEach((pub: any) => {
-          if (pub.isSubscribed && pub.track) {
-            attachRemoteTrack(pub.track, participant);
-            if (pub.kind === 'video' && !pub.isMuted) foundVideo = true;
-          } else if (typeof pub.setSubscribed === 'function') {
+        const pubs = participant.trackPublications || (participant as any).videoTrackPublications || [];
+        pubs.forEach((pub: any) => {
+          const track = pub.track || pub.videoTrack;
+          const k = String(pub.kind || track?.kind || '').toLowerCase();
+          if (pub.isSubscribed && track) {
+            attachRemoteTrack(track, participant);
+            if (k === 'video' && !pub.isMuted) foundVideo = true;
+          } else if (typeof pub.setSubscribed === 'function' && !pub.isSubscribed) {
             pub.setSubscribed(true);
           }
         });
       });
-      setHasRemoteVideo(foundVideo);
+      if (foundVideo) {
+        setHasRemoteVideo(true);
+      }
     };
 
     // Check if any active remote video tracks remain before clearing display
@@ -707,10 +751,13 @@ export default function ConsultationRoom() {
       let hasActiveVideo = false;
       setHasRemoteParticipant(activeRoom.remoteParticipants.size > 0);
       activeRoom.remoteParticipants.forEach((p) => {
-        p.trackPublications.forEach((pub: any) => {
-          if (pub.kind === 'video' && pub.isSubscribed && pub.track && !pub.isMuted) {
+        const pubs = p.trackPublications || (p as any).videoTrackPublications || [];
+        pubs.forEach((pub: any) => {
+          const track = pub.track || pub.videoTrack;
+          const k = String(pub.kind || track?.kind || '').toLowerCase();
+          if (k === 'video' && pub.isSubscribed && track && !pub.isMuted) {
             hasActiveVideo = true;
-            attachRemoteTrack(pub.track, p);
+            attachRemoteTrack(track, p);
           }
         });
       });
@@ -919,6 +966,51 @@ export default function ConsultationRoom() {
       }
     };
   }, [token, showCallView, appointmentId, isVideoOff, isMuted, patientJoinClicked]);
+
+  // Guaranteed local track publishing whenever room connects or localStream becomes available
+  useEffect(() => {
+    const room = roomRef.current;
+    if (!room || room.state !== 'connected' || !room.localParticipant || !localStream) return;
+
+    const publishLocalTracks = async () => {
+      const vTrack = localStream.getVideoTracks()[0];
+      const aTrack = localStream.getAudioTracks()[0];
+
+      if (vTrack && !isVideoOff) {
+        const publishedVideo = Array.from((room.localParticipant as any).videoTrackPublications?.values() || []);
+        const alreadyPublished = publishedVideo.some((pub: any) => pub.track === vTrack || pub.videoTrack === vTrack);
+        if (!alreadyPublished) {
+          try {
+            await room.localParticipant.publishTrack(vTrack, {
+              name: 'camera',
+              source: Track.Source.Camera
+            });
+            console.log("[WebRTC] Successfully published local video track to LiveKit room");
+          } catch (err) {
+            console.warn("[WebRTC] Error publishing local video track:", err);
+          }
+        }
+      }
+
+      if (aTrack && !isMuted) {
+        const publishedAudio = Array.from((room.localParticipant as any).audioTrackPublications?.values() || []);
+        const alreadyPublished = publishedAudio.some((pub: any) => pub.track === aTrack || pub.audioTrack === aTrack);
+        if (!alreadyPublished) {
+          try {
+            await room.localParticipant.publishTrack(aTrack, {
+              name: 'microphone',
+              source: Track.Source.Microphone
+            });
+            console.log("[WebRTC] Successfully published local audio track to LiveKit room");
+          } catch (err) {
+            console.warn("[WebRTC] Error publishing local audio track:", err);
+          }
+        }
+      }
+    };
+
+    publishLocalTracks();
+  }, [localStream, token, isVideoOff, isMuted, showCallView]);
 
   // Global room and media cleanup on appointment change or unmount
   useEffect(() => {
@@ -1218,6 +1310,7 @@ export default function ConsultationRoom() {
 
   // Doctor Leave Room (temporary): Doctor disconnects without concluding appointment
   const handleDoctorLeave = async () => {
+    console.log("[handleDoctorLeave] Doctor leaving room temporarily for appointment:", roomId);
     setShowDoctorEndModal(false);
     try {
       if (localStreamRef.current) {
@@ -1483,6 +1576,9 @@ export default function ConsultationRoom() {
     );
   }
 
+  const backLink = isDoctor ? '/doctor/dashboard' : '/patient/dashboard';
+  const backLabel = isDoctor ? 'Back to Doctor Dashboard' : 'Back to Patient Dashboard';
+
   if (!appointment) {
     return (
       <div className="min-h-screen bg-[#070b14] text-white flex flex-col items-center justify-center font-sans gap-3 p-6 text-center">
@@ -1496,7 +1592,10 @@ export default function ConsultationRoom() {
         <div className="flex items-center gap-3 mt-4">
           <button
             onClick={() => {
+              console.log("[Retry Connection] Retrying user, profile role, and appointment fetch for appointmentId:", roomId);
               setLoadingAppt(true);
+              setLoadingUser(true);
+              fetchUserAndRole();
               loadAppointment(0);
             }}
             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition cursor-pointer"
@@ -1504,10 +1603,10 @@ export default function ConsultationRoom() {
             Retry Connection
           </button>
           <Link
-            href="/patient/dashboard"
+            href={backLink}
             className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-xl transition"
           >
-            Return to Dashboard
+            {backLabel}
           </Link>
         </div>
       </div>
@@ -1519,8 +1618,6 @@ export default function ConsultationRoom() {
   const isDeclinedStatus = apptStatus === 'declined' || apptStatus === 'cancelled' || apptStatus === 'rejected';
   const isCompletedStatus = apptStatus === 'completed';
   const isMissedStatus = apptStatus === 'missed';
-  const backLink = isDoctor ? '/doctor/dashboard' : '/patient/dashboard';
-  const backLabel = isDoctor ? 'Back to Doctor Dashboard' : 'Back to Patient Dashboard';
 
   // Access Guard on Ended / Missed Session: If consultation already completed/concluded or marked as missed, block joining
   if (isCompletedStatus || isMissedStatus) {
@@ -1703,11 +1800,14 @@ export default function ConsultationRoom() {
 
   // Details formatted for patient card
   const patientName = appointment.patient?.name || appointment.patient_name || 'Patient';
+  const patientPhone = appointment.patient?.phone || appointment.phone || 'Not provided';
+  const patientEmail = appointment.patient?.email || appointment.patient_email || 'Not provided';
   const rawDob = appointment.patient?.date_of_birth;
   const computedAge = calculateAge(rawDob);
   const age = computedAge !== null ? computedAge : (appointment.patient?.age ?? null);
   const gender = appointment.patient?.gender || null;
-  const complaint = appointment.reason || 'General Consultation';
+  const rawCleanReason = (appointment.reason || '').replace(/\[[A-Z_]+\]/g, '').trim();
+  const complaint = rawCleanReason || appointment.symptoms || appointment.raw_reason?.replace(/\[[A-Z_]+\]/g, '').trim() || 'General Consultation';
   const symptoms = appointment.symptoms || '';
   const date = appointment.scheduled_date || appointment.appointment_date || '2026-08-17';
   const time = appointment.scheduled_time || appointment.time_slot || '12:00 PM';
@@ -1998,20 +2098,26 @@ export default function ConsultationRoom() {
 
                   <div className="grid grid-cols-2 gap-2">
                     <div className="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800">
-                      <span className="text-slate-400 text-[10px] block font-medium">Age & Gender</span>
-                      <span className="font-semibold text-slate-200">{age !== null ? `${age} yrs` : 'Age N/A'} • {gender || 'Gender N/A'}</span>
+                      <span className="text-slate-400 text-[10px] block font-medium">Phone Number</span>
+                      <span className="font-semibold text-slate-200">{patientPhone}</span>
                     </div>
+                    <div className="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800">
+                      <span className="text-slate-400 text-[10px] block font-medium">Email Address</span>
+                      <span className="font-semibold text-slate-200 truncate block">{patientEmail}</span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
                     <div className="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800">
                       <span className="text-slate-400 text-[10px] block font-medium">Appointment Time</span>
                       <span className="font-semibold text-slate-200">{time}</span>
                     </div>
-                  </div>
-
-                  <div className="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800">
-                    <span className="text-slate-400 text-[10px] block font-medium">Scheduled Date</span>
-                    <span className="font-semibold text-slate-200 flex items-center gap-1.5 mt-0.5">
-                      <Calendar className="w-3.5 h-3.5 text-emerald-400" /> {date}
-                    </span>
+                    <div className="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800">
+                      <span className="text-slate-400 text-[10px] block font-medium">Scheduled Date</span>
+                      <span className="font-semibold text-slate-200 flex items-center gap-1.5 mt-0.5">
+                        <Calendar className="w-3.5 h-3.5 text-emerald-400" /> {date}
+                      </span>
+                    </div>
                   </div>
 
                   <div>
@@ -2030,6 +2136,66 @@ export default function ConsultationRoom() {
                     </div>
                   )}
                 </div>
+              </div>
+
+              {/* 2. Previous Medical Record / Last Prescription Panel */}
+              <div className="bg-[#0f172a]/90 border border-slate-800/90 rounded-2xl p-5 shadow-xl backdrop-blur-md space-y-3">
+                <h3 className="text-xs font-bold text-teal-400 uppercase tracking-wider flex items-center gap-2 border-b border-slate-800 pb-2.5">
+                  <Clock className="w-4 h-4 text-teal-400" /> Previous Medical Record
+                </h3>
+                {loadingLastPrescription ? (
+                  <div className="flex items-center gap-2 text-xs text-slate-400 py-3">
+                    <Loader2 className="w-4 h-4 animate-spin text-teal-400" />
+                    Loading prior records...
+                  </div>
+                ) : lastPrescription ? (
+                  <div className="space-y-2.5 text-xs">
+                    <div className="flex justify-between items-center bg-slate-950/70 p-2.5 rounded-xl border border-slate-800">
+                      <div>
+                        <span className="text-[10px] text-slate-400 block font-medium">Issue Date</span>
+                        <span className="font-semibold text-slate-200">
+                          {new Date(lastPrescription.created_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                      <a
+                        href={`/prescription/${lastPrescription.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[10px] text-teal-400 hover:underline flex items-center gap-1 font-semibold"
+                      >
+                        View Rx <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                    <div className="bg-slate-950/70 p-2.5 rounded-xl border border-slate-800">
+                      <span className="text-[10px] text-slate-400 block font-medium">Last Diagnosis</span>
+                      <span className="font-semibold text-white">{lastPrescription.diagnosis || "General Consultation"}</span>
+                    </div>
+                    {lastPrescription.medicines && lastPrescription.medicines.length > 0 && (
+                      <div className="bg-slate-950/70 p-2.5 rounded-xl border border-slate-800 space-y-1">
+                        <span className="text-[10px] text-slate-400 block font-medium">Prescribed Medicines</span>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {lastPrescription.medicines.map((m: any, idx: number) => (
+                            <span key={idx} className="text-[10px] bg-teal-950/80 text-teal-300 border border-teal-800/60 px-2 py-0.5 rounded font-medium">
+                              {m.medication_name || m.name || m.medicineName} ({m.dosage})
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {(lastPrescription.advice || lastPrescription.instructions) && (
+                      <div className="bg-slate-950/70 p-2.5 rounded-xl border border-slate-800">
+                        <span className="text-[10px] text-slate-400 block font-medium">Doctor Advice &amp; Notes</span>
+                        <p className="text-slate-300 text-xs mt-0.5 line-clamp-3 whitespace-pre-wrap">
+                          {lastPrescription.advice || lastPrescription.instructions}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 text-center">
+                    <p className="text-xs text-slate-400 italic">No previous prescriptions on record</p>
+                  </div>
+                )}
               </div>
 
               {/* 2. Clinical Notes Box */}

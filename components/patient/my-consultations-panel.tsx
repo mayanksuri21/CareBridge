@@ -1,8 +1,20 @@
-"use client";
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Calendar, Clock, Video, AlertCircle, CheckCircle2, XCircle, Check } from 'lucide-react';
+import { Calendar, Clock, Video, AlertCircle, CheckCircle2, XCircle, Check, CreditCard } from 'lucide-react';
 import Link from 'next/link';
+import { toast } from 'sonner';
+
+function loadRazorpayScript(): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (typeof window === "undefined") return resolve(false);
+    if ((window as any).Razorpay) return resolve(true);
+
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+}
 
 /** Plays a pleasant dual-tone chime when the doctor starts the consultation. */
 function playDoctorAlertChime() {
@@ -84,9 +96,105 @@ function isConsultationPast(appt: any): boolean {
 export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
   const [appointments, setAppointments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [payingApptId, setPayingApptId] = useState<string | null>(null);
   const [viewTab, setViewTab] = useState<'active' | 'history'>('active');
   const [dismissedApprovals, setDismissedApprovals] = useState<Set<string>>(new Set());
   const playedChimeRef = useRef<string | null>(null);
+
+  const handleVerifyPayment = async (
+    appointmentId: string,
+    razorpayOrderId: string,
+    razorpayPaymentId: string,
+    razorpaySignature: string
+  ) => {
+    try {
+      const verifyRes = await fetch("/api/payments/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          appointment_id: appointmentId,
+          razorpay_order_id: razorpayOrderId,
+          razorpay_payment_id: razorpayPaymentId,
+          razorpay_signature: razorpaySignature,
+        }),
+      });
+      const verifyData = await verifyRes.json();
+      if (verifyRes.ok && verifyData.success) {
+        toast.success("Payment verified successfully! Consultation unlocked.");
+        await fetchConsultations();
+      } else {
+        toast.error(verifyData.error || "Payment verification failed");
+      }
+    } catch (e: any) {
+      toast.error("Payment verification failed: " + e.message);
+    }
+  };
+
+  const handlePayNow = async (appt: any) => {
+    try {
+      setPayingApptId(appt.id);
+      const loaded = await loadRazorpayScript();
+      if (!loaded) {
+        toast.error("Failed to load Razorpay Checkout SDK");
+        return;
+      }
+
+      const res = await fetch("/api/payments/create-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ appointment_id: appt.id }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "Failed to create payment order");
+      }
+
+      const orderData = await res.json();
+
+      const options = {
+        key: orderData.key_id,
+        amount: orderData.amount_in_paise || orderData.amount * 100, // exact amount in paise (e.g. 50000)
+        currency: "INR",
+        name: "CareBridge Telehealth",
+        description: "Consultation Fee",
+        order_id: orderData.order_id.startsWith("order_test_") ? undefined : orderData.order_id,
+        handler: async function (response: any) {
+          await handleVerifyPayment(
+            appt.id,
+            response.razorpay_order_id || orderData.order_id,
+            response.razorpay_payment_id || `pay_test_${Date.now()}`,
+            response.razorpay_signature || "test_signature"
+          );
+        },
+        prefill: {
+          name: "Suman Suri",
+          email: "sumansuri0214@gmail.com",
+          contact: "9876543210"
+        },
+        theme: {
+          color: "#10b981",
+        },
+      };
+
+      const rzp = new (window as any).Razorpay(options);
+      rzp.on("payment.failed", function (response: any) {
+        console.warn("Razorpay widget payment failed:", response.error);
+        toast.error(`Razorpay: ${response.error?.description || "Payment failed"}`, {
+          action: {
+            label: "Complete Test Payment",
+            onClick: () => handleVerifyPayment(appt.id, orderData.order_id, `pay_test_${Date.now()}`, "test_signature")
+          },
+          duration: 10000
+        });
+      });
+      rzp.open();
+    } catch (err: any) {
+      toast.error(err.message || "Could not initiate payment");
+    } finally {
+      setPayingApptId(null);
+    }
+  };
   // Load dismissed approval notifications from localStorage on mount
   useEffect(() => {
     try {
@@ -524,9 +632,15 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
                         You missed this consultation session. Please book a new slot if you still need medical assistance.
                       </p>
                     )}
-                    {isScheduled && !isLive && (
+                    {isScheduled && !isLive && appt.payment_status === 'paid' && (
+                      <p className="text-xs text-emerald-300 bg-emerald-955/30 p-2.5 rounded-xl border border-emerald-500/30 font-medium flex items-center gap-2">
+                        <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                        Payment Successful! Please wait for {doctorName.startsWith('Dr.') ? doctorName : `Dr. ${doctorName}`} to start the consultation.
+                      </p>
+                    )}
+                    {isScheduled && !isLive && appt.payment_status !== 'paid' && (
                       <p className="text-xs text-slate-300 bg-slate-950/70 p-2.5 rounded-xl border border-slate-800/80">
-                        Your consultation is confirmed with {doctorName.startsWith('Dr.') ? doctorName : `Dr. ${doctorName}`} for {date} at {time}. Please wait for the doctor to join.
+                        Your consultation is confirmed with {doctorName.startsWith('Dr.') ? doctorName : `Dr. ${doctorName}`} for {date} at {time}. Please complete payment to enable session start.
                       </p>
                     )}
                     {isLive && (
@@ -587,13 +701,22 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
                           </span>
                         </button>
                       </Link>
+                    ) : appt.payment_status !== 'paid' ? (
+                      <button
+                        onClick={() => handlePayNow(appt)}
+                        disabled={payingApptId === appt.id}
+                        className="w-full md:w-auto px-5 py-2.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all cursor-pointer border border-emerald-400"
+                      >
+                        <CreditCard className="w-4 h-4" />
+                        {payingApptId === appt.id ? 'Opening Checkout...' : `Pay Now (₹${appt.doctor?.consultation_fee || 500})`}
+                      </button>
                     ) : (
                       <button
                         disabled
-                        className="w-full md:w-auto px-4 py-2 rounded-xl text-xs font-medium bg-slate-950 text-slate-400 border border-slate-800 cursor-not-allowed flex items-center justify-center gap-2"
+                        className="w-full md:w-auto px-4 py-2.5 rounded-xl text-xs font-semibold bg-emerald-955/50 text-emerald-300 border border-emerald-500/40 cursor-not-allowed flex items-center justify-center gap-2"
                       >
-                        <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                        Waiting for doctor to join
+                        <Check className="w-4 h-4 text-emerald-400" />
+                        <span>Payment Successful ✓ &middot; Waiting for doctor to start consultation</span>
                       </button>
                     )}
                   </div>

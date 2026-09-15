@@ -223,16 +223,42 @@ export default function BookConsultationPage() {
   const [noSlotsMessage, setNoSlotsMessage] = useState("");
 
   // Populate form fields from auth profile whenever it becomes available.
-  // This fires on mount and whenever authProfile changes (e.g. navigating
-  // back to this page without a full browser refresh).
   useEffect(() => {
     if (authProfile) {
       if (authProfile.name) setName(authProfile.name);
+      if (authProfile.phone) setPhone(authProfile.phone);
     }
     if (user?.email) {
       setEmail(user.email);
     }
+    if (user?.user_metadata?.phone) {
+      setPhone(user.user_metadata.phone);
+    }
   }, [authProfile, user]);
+
+  // Ensure phone is also pre-filled directly from profiles table if authProfile loaded without phone
+  useEffect(() => {
+    if (user?.id) {
+      (async () => {
+        try {
+          const { data } = await supabase
+            .from("profiles")
+            .select("phone, name")
+            .eq("id", user.id)
+            .maybeSingle();
+
+          if (data?.phone) {
+            setPhone(data.phone);
+          }
+          if (data?.name && !name) {
+            setName(data.name);
+          }
+        } catch (err) {
+          console.warn("Failed to pre-fill phone from profile:", err);
+        }
+      })();
+    }
+  }, [user?.id, supabase, name]);
 
   // Check availability whenever selectedDate or selectedDoctor changes
   useEffect(() => {
@@ -383,10 +409,11 @@ export default function BookConsultationPage() {
       !selectedDoctor ||
       !selectedDate ||
       selectedSlotIndex === "" ||
-      !reason
+      !reason ||
+      !phone.trim()
     ) {
       toast.error(
-        "Please complete the required fields: doctor, date, time, and reason.",
+        "Please complete the required fields: doctor, date, time, phone number, and reason.",
       );
       return;
     }
@@ -485,6 +512,27 @@ export default function BookConsultationPage() {
           // If the timeout fired, this will throw the timeout error
           throw profileErr;
         }
+      }
+
+      // Non-blocking upsert phone back to profiles table so profile update never stalls appointment creation
+      if (phone.trim() && patientId) {
+        console.log("[handleBook] upserting phone to profile");
+        Promise.resolve(
+          supabase
+            .from("profiles")
+            .update({ phone: phone.trim() })
+            .eq("id", patientId)
+        )
+          .then(({ error }: any) => {
+            if (error) {
+              console.warn("[handleBook] phone upsert result:", error.message || error);
+            } else {
+              console.log("[handleBook] phone upsert result:", "success");
+            }
+          })
+          .catch((phoneUpsertErr: any) => {
+            console.warn("[handleBook] phone upsert result:", phoneUpsertErr);
+          });
       }
 
       console.log("[handleBook] patient profile resolved:", {
@@ -688,39 +736,39 @@ export default function BookConsultationPage() {
                               const pending =
                                 d.verification_status === "pending";
                               return (
-                                <SelectItem key={d.id} value={d.id}>
+                                <SelectItem key={d.id} value={d.id} className="cursor-pointer focus:bg-slate-800 focus:text-slate-100 data-[highlighted]:bg-slate-800 data-[highlighted]:text-slate-100">
                                   <div className="flex flex-wrap items-center gap-2 py-0.5">
-                                    <Stethoscope className="h-4 w-4 text-primary" />
-                                    <span className="font-medium">
+                                    <Stethoscope className="h-4 w-4 text-emerald-400" />
+                                    <span className="font-semibold text-foreground">
                                       Dr. {d.name ?? "Unnamed"}
                                     </span>
                                     {d.specialty && (
-                                      <span className="text-muted-foreground">
+                                      <span className="text-slate-300 dark:text-slate-300 font-medium">
                                         — {d.specialty}
                                       </span>
                                     )}
                                     {approved && (
                                       <Badge
                                         variant="outline"
-                                        className="ml-1 font-normal border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                                        className="ml-1 font-medium border-emerald-500/50 bg-emerald-950/70 text-emerald-300"
                                       >
-                                        <CheckCircle2 className="h-3 w-3 mr-1" />{" "}
+                                        <CheckCircle2 className="h-3 w-3 mr-1 text-emerald-400" />{" "}
                                         Verified
                                       </Badge>
                                     )}
                                     {pending && (
                                       <Badge
                                         variant="outline"
-                                        className="ml-1 font-normal border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                                        className="ml-1 font-medium border-amber-500/50 bg-amber-950/70 text-amber-300"
                                       >
-                                        <Clock className="h-3 w-3 mr-1" />{" "}
+                                        <Clock className="h-3 w-3 mr-1 text-amber-400" />{" "}
                                         Pending
                                       </Badge>
                                     )}
                                     {d.language && (
                                       <Badge
                                         variant="secondary"
-                                        className="ml-1 font-normal"
+                                        className="ml-1 font-normal bg-slate-800 text-slate-300 border border-slate-700"
                                       >
                                         {d.language}
                                       </Badge>
@@ -964,9 +1012,10 @@ export default function BookConsultationPage() {
                     </div>
                     <div className="space-y-2 md:col-span-2">
                       <label className="text-sm font-medium">
-                        Phone (optional)
+                        Phone number <span className="text-rose-500">*</span>
                       </label>
                       <Input
+                        type="tel"
                         value={phone}
                         onChange={(e) => setPhone(e.target.value)}
                         placeholder="+91 98000 12345"
@@ -1010,6 +1059,7 @@ export default function BookConsultationPage() {
                         selectedDate < tomorrowISO ||
                         selectedSlotIndex === "" ||
                         !reason ||
+                        !phone.trim() ||
                         booking ||
                         !!booked ||
                         noSlotsConfigured ||

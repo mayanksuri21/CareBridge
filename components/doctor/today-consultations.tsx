@@ -83,18 +83,53 @@ async function fetchTodayConsultations(doctorId: string): Promise<{
   const startOfTomorrow = new Date(startOfToday)
   startOfTomorrow.setDate(startOfTomorrow.getDate() + 1)
 
-  const { data, error } = await supabase
+  let data: any[] | null = null
+  const primaryResult = await supabase
     .from("appointments")
     .select(
-      "id, patient_id, reason, status, schedule_slots!inner(start_time, end_time), patient:profiles!appointments_patient_id_fkey(id, name, email)",
+      "id, patient_id, reason, status, payment_status, schedule_slots!inner(start_time, end_time), patient:profiles!appointments_patient_id_fkey(id, name, email)",
     )
     .eq("doctor_id", doctorId)
     .gte("schedule_slots.start_time", startOfToday.toISOString())
     .lt("schedule_slots.start_time", startOfTomorrow.toISOString())
     .order("start_time", { referencedTable: "schedule_slots", ascending: true })
 
+  let error = primaryResult.error
+  if (error) {
+    const fallback = await supabase
+      .from("appointments")
+      .select(
+        "id, patient_id, reason, status, schedule_slots!inner(start_time, end_time), patient:profiles!appointments_patient_id_fkey(id, name, email)",
+      )
+      .eq("doctor_id", doctorId)
+      .gte("schedule_slots.start_time", startOfToday.toISOString())
+      .lt("schedule_slots.start_time", startOfTomorrow.toISOString())
+      .order("start_time", { referencedTable: "schedule_slots", ascending: true })
+
+    if (fallback.data) {
+      data = fallback.data
+      error = null
+    }
+  } else {
+    data = primaryResult.data
+  }
+
   if (error) return { consultations: [], error }
-  return { consultations: (data ?? []) as unknown as TodayConsultation[], error: null }
+  const formatted = (data ?? []).map((appt: any) => {
+    const reasonStr = appt.reason || '';
+    const isPaid = appt.payment_status === 'paid' || reasonStr.includes('[PAYMENT_PAID]');
+    const paymentStatus = isPaid ? 'paid' : (appt.payment_status === 'pending' || reasonStr.includes('[PAYMENT_PENDING]') ? 'pending' : 'pending');
+    let cleanReason = reasonStr;
+    ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]', '[PAYMENT_PAID]', '[PAYMENT_PENDING]', '[ARCHIVED_BY_DOCTOR]'].forEach(tag => {
+      cleanReason = cleanReason.replace(` ${tag}`, '').replace(tag, '');
+    });
+    return {
+      ...appt,
+      payment_status: paymentStatus,
+      reason: cleanReason
+    };
+  });
+  return { consultations: formatted as unknown as TodayConsultation[], error: null }
 }
 
 export function TodayConsultations({ doctorId, initialConsultations = [] }: TodayConsultationsProps) {
@@ -262,21 +297,43 @@ export function TodayConsultations({ doctorId, initialConsultations = [] }: Toda
                         {consultation.reason ?? "—"}
                       </TableCell>
                       <TableCell>
-                        <Badge variant={statusVariant(consultation.status)}>
-                          {statusLabels[consultation.status] ?? consultation.status}
-                        </Badge>
+                        <div className="flex flex-col gap-1 items-start">
+                          <Badge variant={statusVariant(consultation.status)}>
+                            {statusLabels[consultation.status] ?? consultation.status}
+                          </Badge>
+                          {(consultation as any).payment_status === "paid" ? (
+                            <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded flex items-center gap-1">
+                              <Check className="w-3 h-3 text-emerald-400" /> Payment Received ✓
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-medium text-amber-400 bg-amber-950/40 border border-amber-500/20 px-2 py-0.5 rounded">
+                              Payment Pending
+                            </span>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>
                         <div className="flex justify-end gap-2">
                           {canJoin && (
-                            <Button
-                              size="sm"
-                              variant="default"
-                              className="gap-1.5 cursor-pointer"
-                              onClick={() => handleStartConsultation(consultation.id)}
-                            >
-                              <Video className="h-3.5 w-3.5" /> Join Video Call
-                            </Button>
+                            (consultation as any).payment_status === "paid" ? (
+                              <Button
+                                size="sm"
+                                variant="default"
+                                className="gap-1.5 cursor-pointer bg-emerald-600 hover:bg-emerald-500"
+                                onClick={() => handleStartConsultation(consultation.id)}
+                              >
+                                <Video className="h-3.5 w-3.5" /> Join Video Call
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled
+                                className="gap-1.5 cursor-not-allowed text-xs text-amber-400 border-amber-500/30 bg-amber-950/20"
+                              >
+                                Waiting for patient payment
+                              </Button>
+                            )
                           )}
                           <PatientHistoryModal doctorId={doctorId} patient={patient} />
                           <PrescriptionModal

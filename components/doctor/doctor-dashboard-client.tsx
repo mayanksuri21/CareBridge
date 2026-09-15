@@ -436,16 +436,16 @@ export function DoctorDashboardClient({
                       <h3 className="text-2xl font-bold tracking-tight text-foreground">{selectedPatient.name}</h3>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3 text-xs">
                         <div className="bg-muted/30 p-2.5 rounded-lg">
-                          <span className="text-muted-foreground block font-medium">Age / Gender</span>
-                          <span className="font-semibold text-sm mt-0.5 block">{selectedPatient.age} yrs / {selectedPatient.gender}</span>
-                        </div>
-                        <div className="bg-muted/30 p-2.5 rounded-lg">
-                          <span className="text-muted-foreground block font-medium">Blood Group</span>
-                          <span className="font-semibold text-sm mt-0.5 block text-rose-500">{selectedPatient.blood_group}</span>
-                        </div>
-                        <div className="bg-muted/30 p-2.5 rounded-lg">
                           <span className="text-muted-foreground block font-medium">Phone Number</span>
-                          <span className="font-semibold text-sm mt-0.5 block">{selectedPatient.phone}</span>
+                          <span className="font-semibold text-sm mt-0.5 block">{selectedPatient.phone || "Not provided"}</span>
+                        </div>
+                        <div className="bg-muted/30 p-2.5 rounded-lg">
+                          <span className="text-muted-foreground block font-medium">Email Address</span>
+                          <span className="font-semibold text-sm mt-0.5 block truncate">{selectedPatient.email || "Not provided"}</span>
+                        </div>
+                        <div className="bg-muted/30 p-2.5 rounded-lg">
+                          <span className="text-muted-foreground block font-medium">Total Visits</span>
+                          <span className="font-semibold text-sm mt-0.5 block">{selectedPatient.total_visits}</span>
                         </div>
                         <div className="bg-muted/30 p-2.5 rounded-lg">
                           <span className="text-muted-foreground block font-medium">Patient UUID</span>
@@ -461,13 +461,19 @@ export function DoctorDashboardClient({
                         <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Consultation History ({selectedPatient.appointments.length})</h4>
                         <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
                           {selectedPatient.appointments.map((appt: any, idx: number) => {
-                            const dateObj = new Date(appt.scheduled_at || appt.appointment_date)
+                            let displayDate = "Date unavailable";
+                            if (appt.scheduled_at) {
+                              const dateObj = new Date(appt.scheduled_at);
+                              if (!isNaN(dateObj.getTime())) {
+                                displayDate = dateObj.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' });
+                              }
+                            }
                             const linkedRx = selectedPatient.prescriptions?.find((r: any) => r.appointment_id === appt.id)
                             return (
                               <div key={idx} className="border rounded-lg p-3 bg-muted/10 space-y-1.5 text-xs">
                                 <div className="flex justify-between items-center">
                                   <span className="font-semibold text-[11px] text-muted-foreground">
-                                    {isNaN(dateObj.getTime()) ? "Scheduled slot" : dateObj.toLocaleDateString()}
+                                    {displayDate}
                                   </span>
                                   <Badge variant="outline" className="text-[9px] uppercase">
                                     {appt.status}
