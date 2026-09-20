@@ -8,15 +8,13 @@ export function createSupabaseBrowserClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 
-  const browserClient = createBrowserClient(supabaseUrl, supabaseAnonKey)
-
   if (typeof window === "undefined") {
-    return browserClient
+    return createBrowserClient(supabaseUrl, supabaseAnonKey)
   }
 
   if (!client) {
-    client = browserClient
+    client = createBrowserClient(supabaseUrl, supabaseAnonKey)
   }
 
-  return client as typeof browserClient
+  return client as ReturnType<typeof createBrowserClient>
 }

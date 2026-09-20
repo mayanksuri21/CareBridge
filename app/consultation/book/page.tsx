@@ -13,10 +13,18 @@ import {
   AlertCircle,
   Loader2,
   AlertTriangle,
+  Info,
+  User,
+  Globe,
+  Building2,
+  Award,
+  IndianRupee,
+  ChevronDown,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Card,
   CardContent,
@@ -44,6 +52,11 @@ type DoctorRow = {
   name: string | null;
   specialty: string | null;
   language: string | null;
+  avatar_url?: string | null;
+  about?: string | null;
+  company?: string | null;
+  role?: string | null;
+  onboarding_completed?: boolean | null;
   verification_status: VerificationStatus;
   available_slots: Array<{
     label: string;
@@ -221,6 +234,8 @@ export default function BookConsultationPage() {
   const [dateSlotsLoading, setDateSlotsLoading] = useState(false);
   const [bookedSlotsForDate, setBookedSlotsForDate] = useState<string[]>([]);
   const [noSlotsMessage, setNoSlotsMessage] = useState("");
+  const [activeDoctorForDetails, setActiveDoctorForDetails] = useState<DoctorRow | null>(null);
+  const [isDoctorDropdownOpen, setIsDoctorDropdownOpen] = useState<boolean>(false);
 
   // Populate form fields from auth profile whenever it becomes available.
   useEffect(() => {
@@ -386,6 +401,11 @@ export default function BookConsultationPage() {
             name: d.name,
             specialty: d.specialty,
             language: d.language || null,
+            avatar_url: d.avatar_url || null,
+            about: d.about || null,
+            company: d.company || null,
+            role: d.role || "doctor",
+            onboarding_completed: d.onboarding_completed ?? true,
             verification_status: d.verification_status || "approved",
             available_slots: slots,
             active_slots: d.active_slots || [],
@@ -690,6 +710,150 @@ export default function BookConsultationPage() {
                 </button>
               </Link>
             </div>
+          ) : activeDoctorForDetails ? (
+            <Card className="border-border shadow-xl">
+              <CardHeader className="pb-4 border-b border-border">
+                <div className="flex items-center justify-between">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setActiveDoctorForDetails(null)}
+                    className="text-muted-foreground hover:text-foreground -ml-2"
+                  >
+                    <ArrowLeft className="w-4 h-4 mr-1.5" />
+                    Back to Doctors
+                  </Button>
+                  {activeDoctorForDetails.verification_status === "approved" && (
+                    <Badge
+                      variant="outline"
+                      className="font-medium border-emerald-500/40 bg-emerald-950/60 text-emerald-400 gap-1"
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" /> Verified Doctor
+                    </Badge>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent className="pt-6 space-y-6">
+                {/* Doctor Avatar & Header */}
+                <div className="flex flex-col items-center text-center space-y-3 pb-4 border-b border-border">
+                  <Avatar className="w-24 h-24 border-4 border-primary/20 shadow-md">
+                    {activeDoctorForDetails.avatar_url ? (
+                      <AvatarImage
+                        src={activeDoctorForDetails.avatar_url}
+                        alt={activeDoctorForDetails.name || "Doctor"}
+                        className="object-cover"
+                      />
+                    ) : null}
+                    <AvatarFallback className="bg-primary/20 text-primary font-bold text-2xl">
+                      {activeDoctorForDetails.name
+                        ? activeDoctorForDetails.name.substring(0, 2).toUpperCase()
+                        : "DR"}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div>
+                    <h2 className="text-xl font-bold text-foreground">
+                      Dr. {activeDoctorForDetails.name ?? "Unnamed"}
+                    </h2>
+                    <p className="text-sm text-primary font-medium mt-0.5">
+                      {activeDoctorForDetails.specialty || "General Medicine"}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Doctor Attributes */}
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">
+                      About
+                    </h4>
+                    <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
+                      {activeDoctorForDetails.about && typeof activeDoctorForDetails.about === "string" && !activeDoctorForDetails.about.startsWith("[") && !activeDoctorForDetails.about.startsWith("{")
+                        ? activeDoctorForDetails.about
+                        : "Doctor has not added a professional bio yet."}
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                    {activeDoctorForDetails.specialty && (
+                      <div className="flex items-start gap-2.5 p-3 rounded-lg bg-muted/40 border border-border/50">
+                        <Stethoscope className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-xs font-medium text-muted-foreground">Specialization</p>
+                          <p className="text-sm font-semibold text-foreground">
+                            {activeDoctorForDetails.specialty}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex items-start gap-2.5 p-3 rounded-lg bg-muted/40 border border-border/50">
+                      <Award className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-xs font-medium text-muted-foreground">Experience</p>
+                        <p className="text-sm font-semibold text-foreground">
+                          8+ Years Experience
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-start gap-2.5 p-3 rounded-lg bg-muted/40 border border-border/50">
+                      <Globe className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-xs font-medium text-muted-foreground">Languages</p>
+                        <p className="text-sm font-semibold text-foreground">
+                          {activeDoctorForDetails.language || "English, Hindi"}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-start gap-2.5 p-3 rounded-lg bg-muted/40 border border-border/50">
+                      <IndianRupee className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-xs font-medium text-muted-foreground">Consultation Fee</p>
+                        <p className="text-sm font-semibold text-foreground">
+                          ₹500
+                        </p>
+                      </div>
+                    </div>
+
+                    {activeDoctorForDetails.company && (
+                      <div className="flex items-start gap-2.5 p-3 rounded-lg bg-muted/40 border border-border/50 md:col-span-2">
+                        <Building2 className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-xs font-medium text-muted-foreground">Clinic / Organization</p>
+                          <p className="text-sm font-semibold text-foreground">
+                            {activeDoctorForDetails.company}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Bottom Actions */}
+                <div className="flex items-center justify-end gap-3 pt-4 border-t border-border">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setActiveDoctorForDetails(null)}
+                  >
+                    ← Back to Doctors
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      setSelectedDoctor(activeDoctorForDetails.id);
+                      setActiveDoctorForDetails(null);
+                      toast.success(`Selected Dr. ${activeDoctorForDetails.name}`);
+                    }}
+                    className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold"
+                  >
+                    Select This Doctor
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
           ) : (
             <>
               <Card>
@@ -706,88 +870,205 @@ export default function BookConsultationPage() {
                       <label className="text-sm font-medium text-foreground mb-2 block">
                         Doctor
                       </label>
-                      <Select
-                        value={selectedDoctor}
-                        onValueChange={setSelectedDoctor}
-                      >
-                        <SelectTrigger>
-                          <SelectValue
-                            placeholder={
-                              doctorsLoading
-                                ? "Loading doctors..."
-                                : "Select a doctor"
-                            }
-                          />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {doctorsLoading ? (
-                            <div className="flex items-center gap-2 px-2 py-4 text-xs text-muted-foreground">
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />{" "}
-                              Loading doctors...
+
+                      {/* Doctor Dropdown Trigger */}
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setIsDoctorDropdownOpen((prev) => !prev)}
+                          className="w-full flex items-center justify-between p-3 rounded-xl border border-input bg-card hover:bg-accent/40 text-foreground text-sm font-medium transition-all shadow-xs cursor-pointer"
+                        >
+                          {selectedDoctorData ? (
+                            <div className="flex items-center gap-3 text-left">
+                              <Avatar className="h-8 w-8 shrink-0 border border-border">
+                                {selectedDoctorData.avatar_url ? (
+                                  <AvatarImage
+                                    src={selectedDoctorData.avatar_url}
+                                    alt={selectedDoctorData.name || "Doctor"}
+                                    className="object-cover"
+                                  />
+                                ) : null}
+                                <AvatarFallback className="bg-primary/10 text-primary font-bold text-xs">
+                                  {selectedDoctorData.name
+                                    ? selectedDoctorData.name.substring(0, 2).toUpperCase()
+                                    : "DR"}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div>
+                                <div className="flex items-center gap-1.5 font-semibold text-sm leading-tight text-foreground">
+                                  <span>Dr. {selectedDoctorData.name ?? "Unnamed"}</span>
+                                  {selectedDoctorData.verification_status === "approved" && (
+                                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                                  )}
+                                </div>
+                                <p className="text-xs text-muted-foreground font-normal">
+                                  {selectedDoctorData.specialty || "General Medicine"}
+                                </p>
+                              </div>
                             </div>
-                          ) : doctors.length === 0 ? (
-                            <SelectItem value="none" disabled>
-                              No doctors available yet
-                            </SelectItem>
                           ) : (
-                            doctors.map((d) => {
-                              const approved =
-                                d.verification_status === "approved";
-                              const pending =
-                                d.verification_status === "pending";
-                              return (
-                                <SelectItem key={d.id} value={d.id} className="cursor-pointer focus:bg-slate-800 focus:text-slate-100 data-[highlighted]:bg-slate-800 data-[highlighted]:text-slate-100">
-                                  <div className="flex flex-wrap items-center gap-2 py-0.5">
-                                    <Stethoscope className="h-4 w-4 text-emerald-400" />
-                                    <span className="font-semibold text-foreground">
-                                      Dr. {d.name ?? "Unnamed"}
-                                    </span>
-                                    {d.specialty && (
-                                      <span className="text-slate-300 dark:text-slate-300 font-medium">
-                                        — {d.specialty}
-                                      </span>
-                                    )}
-                                    {approved && (
-                                      <Badge
-                                        variant="outline"
-                                        className="ml-1 font-medium border-emerald-500/50 bg-emerald-950/70 text-emerald-300"
-                                      >
-                                        <CheckCircle2 className="h-3 w-3 mr-1 text-emerald-400" />{" "}
-                                        Verified
-                                      </Badge>
-                                    )}
-                                    {pending && (
-                                      <Badge
-                                        variant="outline"
-                                        className="ml-1 font-medium border-amber-500/50 bg-amber-950/70 text-amber-300"
-                                      >
-                                        <Clock className="h-3 w-3 mr-1 text-amber-400" />{" "}
-                                        Pending
-                                      </Badge>
-                                    )}
-                                    {d.language && (
-                                      <Badge
-                                        variant="secondary"
-                                        className="ml-1 font-normal bg-slate-800 text-slate-300 border border-slate-700"
-                                      >
-                                        {d.language}
-                                      </Badge>
-                                    )}
-                                  </div>
-                                </SelectItem>
-                              );
-                            })
+                            <span className="text-muted-foreground font-normal">
+                              {doctorsLoading ? "Loading doctors..." : "Select a doctor"}
+                            </span>
                           )}
-                        </SelectContent>
-                      </Select>
-                      {selectedDoctorData && (
-                        <p className="mt-2 text-xs text-muted-foreground">
-                          Showing {activeSlotsForSelectedDoctor.length} time
-                          slots
-                          {selectedDoctorData.verification_status === "approved"
-                            ? " for this verified doctor."
-                            : "."}
-                        </p>
+                          <ChevronDown
+                            className={`w-4 h-4 text-muted-foreground transition-transform duration-200 ${
+                              isDoctorDropdownOpen ? "rotate-180" : ""
+                            }`}
+                          />
+                        </button>
+
+                        {/* Collapsible Dropdown List */}
+                        {isDoctorDropdownOpen && (
+                          <div className="absolute left-0 right-0 top-full mt-2 z-50 p-3 rounded-2xl border border-border bg-popover/95 backdrop-blur-md shadow-2xl space-y-3 max-h-96 overflow-y-auto">
+                            {doctorsLoading ? (
+                              <div className="flex items-center justify-center gap-2 p-6 text-xs text-muted-foreground">
+                                <Loader2 className="h-4 w-4 animate-spin text-primary" /> Loading available doctors...
+                              </div>
+                            ) : doctors.length === 0 ? (
+                              <div className="p-6 text-center text-xs text-muted-foreground">
+                                No doctors available yet
+                              </div>
+                            ) : (
+                              doctors.map((d) => {
+                                const approved = d.verification_status === "approved";
+                                const isSelected = selectedDoctor === d.id;
+
+                                return (
+                                  <div
+                                    key={d.id}
+                                    className={`p-3.5 rounded-xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                                      isSelected
+                                        ? "border-primary bg-primary/10 ring-1 ring-primary/40 shadow-xs"
+                                        : "border-border/60 bg-card hover:border-border hover:bg-muted/40"
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-3 min-w-0">
+                                      <Avatar className="h-11 w-11 shrink-0 border border-border">
+                                        {d.avatar_url ? (
+                                          <AvatarImage
+                                            src={d.avatar_url}
+                                            alt={d.name || "Doctor"}
+                                            className="object-cover"
+                                          />
+                                        ) : null}
+                                        <AvatarFallback className="bg-primary/10 text-primary font-bold text-xs">
+                                          {d.name
+                                            ? d.name.substring(0, 2).toUpperCase()
+                                            : "DR"}
+                                        </AvatarFallback>
+                                      </Avatar>
+                                      <div className="min-w-0">
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <h4 className="font-semibold text-sm text-foreground truncate">
+                                            Dr. {d.name ?? "Unnamed"}
+                                          </h4>
+                                          {approved && (
+                                            <Badge
+                                              variant="outline"
+                                              className="text-[10px] py-0 px-1.5 font-medium border-emerald-500/40 bg-emerald-950/60 text-emerald-400 gap-1 shrink-0"
+                                            >
+                                              <CheckCircle2 className="h-3 w-3" /> Verified
+                                            </Badge>
+                                          )}
+                                        </div>
+                                        <p className="text-xs text-muted-foreground truncate mt-0.5">
+                                          {d.specialty || "General Medicine"}
+                                        </p>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-2 shrink-0 sm:self-center">
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setActiveDoctorForDetails(d);
+                                          setIsDoctorDropdownOpen(false);
+                                        }}
+                                        className="text-xs font-medium gap-1 h-8 px-2.5"
+                                      >
+                                        <Info className="h-3.5 w-3.5 text-primary" />
+                                        Know More
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant={isSelected ? "default" : "secondary"}
+                                        size="sm"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setSelectedDoctor(d.id);
+                                          setIsDoctorDropdownOpen(false);
+                                        }}
+                                        className={`text-xs font-semibold h-8 px-3 ${
+                                          isSelected
+                                            ? "bg-primary text-primary-foreground"
+                                            : "bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700"
+                                        }`}
+                                      >
+                                        {isSelected ? "Selected ✓" : "Select Doctor"}
+                                      </Button>
+                                    </div>
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Selected Doctor Compact Display Card */}
+                      {selectedDoctorData && !isDoctorDropdownOpen && (
+                        <div className="mt-3 p-3.5 rounded-xl border border-border bg-slate-900/60 dark:bg-slate-900/60 backdrop-blur-sm flex items-center justify-between gap-3 transition-all">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <Avatar className="h-10 w-10 shrink-0 border-2 border-primary/20">
+                              {selectedDoctorData.avatar_url ? (
+                                <AvatarImage
+                                  src={selectedDoctorData.avatar_url}
+                                  alt={selectedDoctorData.name || "Doctor"}
+                                  className="object-cover"
+                                />
+                              ) : null}
+                              <AvatarFallback className="bg-primary/20 text-primary font-bold text-xs">
+                                {selectedDoctorData.name
+                                  ? selectedDoctorData.name.substring(0, 2).toUpperCase()
+                                  : "DR"}
+                              </AvatarFallback>
+                            </Avatar>
+
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <h4 className="font-semibold text-sm text-foreground truncate">
+                                  Dr. {selectedDoctorData.name ?? "Unnamed"}
+                                </h4>
+                                {selectedDoctorData.verification_status === "approved" && (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[10px] py-0 px-1.5 font-medium border-emerald-500/40 bg-emerald-950/60 text-emerald-400 gap-1 shrink-0"
+                                  >
+                                    <CheckCircle2 className="h-3 w-3" /> Verified
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="text-xs text-muted-foreground truncate mt-0.5">
+                                {selectedDoctorData.specialty || "General Medicine"}
+                              </p>
+                            </div>
+                          </div>
+
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => setActiveDoctorForDetails(selectedDoctorData)}
+                            className="shrink-0 text-xs font-medium gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700"
+                          >
+                            <Info className="h-3.5 w-3.5 text-primary" />
+                            Know More
+                          </Button>
+                        </div>
                       )}
                     </div>
 

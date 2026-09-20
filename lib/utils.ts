@@ -32,7 +32,13 @@ export function formatStableDateTime(dateStr?: string | Date) {
  */
 export function calculateAge(dob: string | Date | null | undefined): number | null {
   if (!dob) return null;
-  const birthDate = new Date(dob);
+  let birthDate: Date;
+  if (typeof dob === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dob.trim())) {
+    const [y, m, d] = dob.trim().split('-').map(Number);
+    birthDate = new Date(y, m - 1, d);
+  } else {
+    birthDate = new Date(dob);
+  }
   if (isNaN(birthDate.getTime())) return null;
   const today = new Date();
   let age = today.getFullYear() - birthDate.getFullYear();

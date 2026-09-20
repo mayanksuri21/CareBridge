@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
     // Default: Fetch all doctors list
     const { data: doctorsData, error: doctorsError } = await supabase
       .from('profiles')
-      .select('id, name, email, specialty, role')
+      .select('id, name, email, specialty, role, avatar_url, language, about, company, onboarding_completed')
       .eq('role', 'doctor')
 
     if (doctorsError) {
@@ -95,6 +95,13 @@ export async function GET(request: NextRequest) {
         id: doc.id,
         name: doc.name || 'Dr. ' + (doc.email?.split('@')[0] || 'Doctor'),
         specialty: doc.specialty || 'General Practitioner',
+        avatar_url: doc.avatar_url || null,
+        language: doc.language || null,
+        about: doc.about || null,
+        company: doc.company || null,
+        role: doc.role || 'doctor',
+        onboarding_completed: doc.onboarding_completed ?? true,
+        verification_status: doc.verification_status || 'approved',
         available_slots: activeSlots,
         active_slots: activeSlots
       }

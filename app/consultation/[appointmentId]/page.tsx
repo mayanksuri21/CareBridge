@@ -723,7 +723,8 @@ export default function ConsultationRoom() {
 
       activeRoom.remoteParticipants.forEach((participant) => {
         console.log("[WebRTC] [Sync] Scanning remote participant:", participant.identity);
-        const pubs = participant.trackPublications || (participant as any).videoTrackPublications || [];
+        const pubsMap = participant.trackPublications || (participant as any).videoTrackPublications;
+        const pubs = pubsMap ? (typeof pubsMap.values === 'function' ? Array.from(pubsMap.values()) : Array.isArray(pubsMap) ? pubsMap : Object.values(pubsMap)) : [];
         pubs.forEach((pub: any) => {
           const track = pub.track || pub.videoTrack;
           const k = String(pub.kind || track?.kind || '').toLowerCase();
@@ -977,8 +978,15 @@ export default function ConsultationRoom() {
       const aTrack = localStream.getAudioTracks()[0];
 
       if (vTrack && !isVideoOff) {
-        const publishedVideo = Array.from((room.localParticipant as any).videoTrackPublications?.values() || []);
-        const alreadyPublished = publishedVideo.some((pub: any) => pub.track === vTrack || pub.videoTrack === vTrack);
+        const publishedVideoMap = (room.localParticipant as any).videoTrackPublications || room.localParticipant.trackPublications;
+        const publishedVideo = publishedVideoMap ? (typeof publishedVideoMap.values === 'function' ? Array.from(publishedVideoMap.values()) : Array.from(publishedVideoMap)) : [];
+        const alreadyPublished = publishedVideo.some((pub: any) => 
+          pub.track === vTrack || 
+          pub.videoTrack === vTrack || 
+          pub.track?.mediaStreamTrack === vTrack || 
+          pub.videoTrack?.mediaStreamTrack === vTrack ||
+          (pub as any).mediaStreamTrack === vTrack
+        );
         if (!alreadyPublished) {
           try {
             await room.localParticipant.publishTrack(vTrack, {
@@ -993,8 +1001,15 @@ export default function ConsultationRoom() {
       }
 
       if (aTrack && !isMuted) {
-        const publishedAudio = Array.from((room.localParticipant as any).audioTrackPublications?.values() || []);
-        const alreadyPublished = publishedAudio.some((pub: any) => pub.track === aTrack || pub.audioTrack === aTrack);
+        const publishedAudioMap = (room.localParticipant as any).audioTrackPublications || room.localParticipant.trackPublications;
+        const publishedAudio = publishedAudioMap ? (typeof publishedAudioMap.values === 'function' ? Array.from(publishedAudioMap.values()) : Array.from(publishedAudioMap)) : [];
+        const alreadyPublished = publishedAudio.some((pub: any) => 
+          pub.track === aTrack || 
+          pub.audioTrack === aTrack || 
+          pub.track?.mediaStreamTrack === aTrack || 
+          pub.audioTrack?.mediaStreamTrack === aTrack ||
+          (pub as any).mediaStreamTrack === aTrack
+        );
         if (!alreadyPublished) {
           try {
             await room.localParticipant.publishTrack(aTrack, {
@@ -1806,8 +1821,20 @@ export default function ConsultationRoom() {
   const computedAge = calculateAge(rawDob);
   const age = computedAge !== null ? computedAge : (appointment.patient?.age ?? null);
   const gender = appointment.patient?.gender || null;
-  const rawCleanReason = (appointment.reason || '').replace(/\[[A-Z_]+\]/g, '').trim();
-  const complaint = rawCleanReason || appointment.symptoms || appointment.raw_reason?.replace(/\[[A-Z_]+\]/g, '').trim() || 'General Consultation';
+  const extractVisitReason = (text: string | null | undefined): string => {
+    if (!text) return '';
+    let clean = text.replace(/\[[A-Z_]+\]/g, '').trim();
+    if (clean.includes('Selected Date:')) {
+      clean = clean.split('Selected Date:')[0].trim();
+    }
+    if (clean.includes('Time Slot:')) {
+      clean = clean.split('Time Slot:')[0].trim();
+    }
+    return clean;
+  };
+
+  const rawCleanReason = extractVisitReason(appointment.reason || appointment.raw_reason);
+  const complaint = rawCleanReason || appointment.symptoms || 'General Consultation';
   const symptoms = appointment.symptoms || '';
   const date = appointment.scheduled_date || appointment.appointment_date || '2026-08-17';
   const time = appointment.scheduled_time || appointment.time_slot || '12:00 PM';

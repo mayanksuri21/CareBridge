@@ -29,13 +29,16 @@ import {
   X,
   ArrowLeft,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  Calendar as CalendarIcon
 } from "lucide-react"
 import Link from "next/link"
 import type { Session } from "@supabase/supabase-js"
 import { TextEffect } from "@/components/ui/text-effect"
 import { useAuth } from "@/components/auth-provider"
-import { calculateAge } from "@/lib/utils"
+import { calculateAge, cn } from "@/lib/utils"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Calendar } from "@/components/ui/calendar"
 
 interface ProfileData {
   id: string
@@ -63,6 +66,46 @@ interface ProfileData {
   allergies?: string | null
 }
 
+function formatDobISO(rawDob?: string | null): string {
+  if (!rawDob) return '';
+  const trimmed = rawDob.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  if (trimmed.includes('T')) {
+    const part = trimmed.split('T')[0];
+    if (/^\d{4}-\d{2}-\d{2}$/.test(part)) return part;
+  }
+  const d = new Date(trimmed);
+  if (!isNaN(d.getTime())) {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  return '';
+}
+
+function parseDobToLocalDate(dobISO?: string | null): Date | undefined {
+  const iso = formatDobISO(dobISO);
+  if (!iso) return undefined;
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y || !m || !d) return undefined;
+  return new Date(y, m - 1, d);
+}
+
+function formatLocalDateToISO(date: Date): string {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function formatDisplayDate(dobISO?: string | null): string {
+  const iso = formatDobISO(dobISO);
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  return `${d}-${m}-${y}`;
+}
+
 export default function ProfilePage() {
   const router = useRouter()
   const supabase = useMemo(() => createSupabaseBrowserClient(), [])
@@ -71,6 +114,7 @@ export default function ProfilePage() {
   
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
+  const [fetchError, setFetchError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(false)
@@ -78,46 +122,65 @@ export default function ProfilePage() {
   const [profileCompleteness, setProfileCompleteness] = useState(0)
   const [selectedImage, setSelectedImage] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string>("")
+  const [dobPickerOpen, setDobPickerOpen] = useState(false)
+  const [pickerMonth, setPickerMonth] = useState<Date>(new Date(1995, 0, 1))
+
+  const parsedDobDate = useMemo(() => {
+    return parseDobToLocalDate(profileData.date_of_birth);
+  }, [profileData.date_of_birth]);
 
   useEffect(() => {
+    if (parsedDobDate) {
+      setPickerMonth(parsedDobDate);
+    } else {
+      setPickerMonth(new Date(1995, 0, 1));
+    }
+  }, [parsedDobDate]);
+
+  useEffect(() => {
+    let isMounted = true
+
     const loadProfile = async () => {
       if (authLoading) return
 
-      if (!authSession) {
-        console.log("Profile page: No session found, redirecting to login")
-        setLoading(false)
-        toast({
-          title: "Not Authenticated",
-          description: "Please log in to access your profile",
-          variant: "destructive"
-        })
-        router.push("/login")
-        return
-      }
-
       try {
-        console.log("Profile page: Session found, user ID:", authSession.user.id)
-        setSession(authSession)
+        const effectiveUser = authSession?.user
+        if (!effectiveUser) {
+          if (!isMounted) return
+          console.log("Profile page: No session found, redirecting to login")
+          toast({
+            title: "Not Authenticated",
+            description: "Please log in to access your profile",
+            variant: "destructive"
+          })
+          router.push("/login")
+          return
+        }
 
-        console.log("Profile page: Checking for existing profile...")
+        setSession(authSession)
+        setFetchError(null)
+
         const { data: profile, error: profileError } = await supabase
           .from("profiles")
-          .select("*")
-          .eq("id", authSession.user.id)
-          .single()
+          .select("id, name, email, phone, role, address, company, portfolio, github, about, avatar_url, specialty, language, onboarding_completed, first_login_at, created_at, updated_at, age, gender")
+          .eq("id", effectiveUser.id)
+          .maybeSingle()
 
-        console.log("Profile page: Profile query result:", profile ? "Profile found" : "No profile", profileError)
+        if (!isMounted) return
 
-        if (profileError && profileError.code !== 'PGRST116') {
-          console.error("Profile error:", profileError)
+        if (profileError) {
+          console.error("Profile error returned from Supabase:", profileError)
+          setFetchError(profileError.message || "Failed to load profile data from database")
+          return
         }
+
         if (!profile) {
-          console.log("Profile page: No profile found, showing onboarding")
-          const userDob = authSession.user.user_metadata?.date_of_birth || authSession.user.user_metadata?.dob || "";
+          const rawUserDob = effectiveUser.user_metadata?.date_of_birth || effectiveUser.user_metadata?.dob || "";
+          const userDob = formatDobISO(rawUserDob);
           setShowOnboarding(true)
-          setProfileData({
-            name: authSession.user.user_metadata?.full_name || "",
-            email: authSession.user.email || "",
+          const defaultData: Partial<ProfileData> = {
+            name: effectiveUser.user_metadata?.full_name || effectiveUser.user_metadata?.name || "",
+            email: effectiveUser.email || "",
             role: "patient",
             phone: "",
             address: "",
@@ -130,54 +193,56 @@ export default function ProfilePage() {
             language: "en",
             date_of_birth: userDob,
             age: userDob ? (calculateAge(userDob) ?? "") : "",
-            gender: authSession.user.user_metadata?.gender || "",
+            gender: effectiveUser.user_metadata?.gender || "",
             blood_group: "",
             emergency_contact: "",
             allergies: ""
-          })
+          }
+          setProfileData(defaultData)
+          calculateCompleteness(defaultData)
         } else {
-          console.log("Profile page: Profile found, loading data:", profile.name)
           const isJsonAbout = profile.about?.trim().startsWith('[') || profile.about?.trim().startsWith('{');
-          const effectiveDob = profile.date_of_birth || authSession.user.user_metadata?.date_of_birth || authSession.user.user_metadata?.dob || "";
-          const dynamicAge = effectiveDob ? (calculateAge(effectiveDob) ?? profile.age ?? "") : (profile.age ?? authSession.user.user_metadata?.age ?? "");
-          setProfileData({
+          const rawEffectiveDob = effectiveUser.user_metadata?.date_of_birth || effectiveUser.user_metadata?.dob || "";
+          const effectiveDob = formatDobISO(rawEffectiveDob);
+          const dynamicAge = effectiveDob ? (calculateAge(effectiveDob) ?? profile.age ?? "") : (profile.age ?? effectiveUser.user_metadata?.age ?? "");
+          
+          const loadedData: Partial<ProfileData> = {
             ...profile,
-            name: profile.name || authSession.user.user_metadata?.full_name || "",
-            email: profile.email || authSession.user.email || "",
+            name: profile.name || effectiveUser.user_metadata?.full_name || effectiveUser.user_metadata?.name || "",
+            email: profile.email || effectiveUser.email || "",
             about: isJsonAbout ? "" : (profile.about || ""),
             date_of_birth: effectiveDob,
             age: dynamicAge,
-            gender: profile.gender || authSession.user.user_metadata?.gender || "",
-            blood_group: profile.blood_group ?? "",
-            emergency_contact: profile.emergency_contact ?? "",
-            allergies: profile.allergies ?? ""
-          })
-          
+            gender: profile.gender || effectiveUser.user_metadata?.gender || "",
+            blood_group: "",
+            emergency_contact: "",
+            allergies: ""
+          }
+
+          setProfileData(loadedData)
           if (!profile.onboarding_completed) {
-            console.log("Profile page: Onboarding not completed, showing onboarding")
             setShowOnboarding(true)
           }
+          calculateCompleteness(loadedData)
         }
-
-        calculateCompleteness(profile || {})
-        console.log("Profile page: Loading completed successfully")
-        
-      } catch (error) {
+      } catch (error: any) {
         console.error("Error loading profile:", error)
-        toast({
-          title: "Error",
-          description: "Failed to load profile data",
-          variant: "destructive"
-        })
+        if (isMounted) {
+          setFetchError(error?.message || "An unexpected error occurred while loading profile")
+        }
       } finally {
-        console.log("Profile page: Setting loading to false")
-        setLoading(false)
+        if (isMounted) {
+          setLoading(false)
+        }
       }
     }
 
-    console.log("Profile page: useEffect triggered, calling loadProfile")
     loadProfile()
-  }, [router, supabase, toast, authLoading, authSession])
+
+    return () => {
+      isMounted = false
+    }
+  }, [router, supabase, authLoading, authSession?.user?.id])
 
   const calculateCompleteness = (profile: any) => {
     const requiredFields = ['name', 'email', 'phone', 'role']
@@ -286,7 +351,20 @@ export default function ProfilePage() {
         avatarUrl = imagePreview
       }
 
-      const dobVal = profileData.date_of_birth || null;
+      const rawDobInput = profileData.date_of_birth ? String(profileData.date_of_birth).trim() : "";
+      const todayISOStr = new Date().toISOString().split('T')[0];
+
+      if (rawDobInput && rawDobInput > todayISOStr) {
+        setSaving(false);
+        toast({
+          title: "Invalid Date of Birth",
+          description: "Date of Birth cannot be in the future.",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      const dobVal = formatDobISO(rawDobInput) || null;
       const dynamicCalculatedAge = dobVal ? calculateAge(dobVal) : (profileData.age ? Number(profileData.age) : null);
 
       const updateData: any = {
@@ -294,69 +372,86 @@ export default function ProfilePage() {
         name: profileData.name,
         email: profileData.email,
         phone: profileData.phone || '',
-        role: profileData.role || 'patient',
         address: profileData.address || '',
         company: profileData.company || '',
-        portfolio: profileData.portfolio || '',
-        github: profileData.github || '',
         about: profileData.about || '',
         avatar_url: avatarUrl || '',
         specialty: profileData.specialty || '',
         language: profileData.language || 'en',
         age: dynamicCalculatedAge,
         gender: profileData.gender || null,
-        blood_group: profileData.blood_group || null,
-        emergency_contact: profileData.emergency_contact || null,
-        allergies: profileData.allergies || null,
         onboarding_completed: true,
         first_login_at: profileData.first_login_at || new Date().toISOString(),
         updated_at: new Date().toISOString()
       }
 
-      if (dobVal) {
-        updateData.date_of_birth = dobVal;
-      }
-
       console.log('Saving profile data:', updateData)
 
-      let { error, data } = await supabase
+      const { error: dbError, data: dbResult } = await supabase
         .from("profiles")
         .upsert(updateData, { onConflict: 'id' })
         .select()
+        .maybeSingle()
 
-      if (error && (error.message?.includes("date_of_birth") || error.code === "42703")) {
-        delete updateData.date_of_birth;
-        const retry = await supabase.from("profiles").upsert(updateData, { onConflict: 'id' }).select();
-        error = retry.error;
-        data = retry.data;
+      if (dbError) {
+        console.error('Database error saving profile:', dbError)
+        setSaving(false);
+        toast({
+          title: "Save Failed",
+          description: `Failed to save profile: ${dbError.message}`,
+          variant: "destructive"
+        });
+        return;
       }
 
-      if (error) {
-        console.error('Database error:', error)
-        throw new Error(`Database error: ${error.message}`)
+      // Explicit check for DOB metadata update on Auth user
+      const existingUserMetadata = session.user.user_metadata || {};
+      const { error: authError } = await supabase.auth.updateUser({
+        data: {
+          ...existingUserMetadata,
+          date_of_birth: dobVal,
+          dob: dobVal
+        }
+      });
+
+      if (authError) {
+        console.error("Auth metadata error saving DOB:", authError);
+        setSaving(false);
+        toast({
+          title: "Save Failed",
+          description: `Failed to update date of birth metadata: ${authError.message}`,
+          variant: "destructive"
+        });
+        return;
       }
 
-      console.log('Profile saved successfully:', data)
+      console.log('Profile saved successfully:', dbResult)
 
-      setProfileData(updateData)
+      const savedFullState = {
+        ...profileData,
+        ...updateData,
+        date_of_birth: dobVal || ""
+      };
+
+      setProfileData(savedFullState)
       setSelectedImage(null)
       setImagePreview("")
       setIsEditing(false)
       setShowOnboarding(false)
-      calculateCompleteness(updateData)
+      calculateCompleteness(savedFullState)
 
       await refreshProfile()
 
       toast({
         title: "Success",
-        description: "Profile updated successfully!",
+        description: "Profile updated successfully",
       })
 
-    } catch (error) {
-      console.error("Save error:", error)
+    } catch (error: any) {
+      console.error("Error saving profile:", error)
       toast({
-        title: "Save Failed",
-        description: error instanceof Error ? error.message : "Please try again",
+        title: "Error",
+        description: error?.message || "Failed to save profile",
         variant: "destructive"
       })
     } finally {
@@ -370,10 +465,10 @@ export default function ProfilePage() {
     try {
       const basicData = {
         id: session.user.id,
-        name: session.user.user_metadata?.full_name || session.user.email || "",
-        email: session.user.email || "",
-        role: 'patient' as const,
+        name: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'User',
+        email: session.user.email || '',
         phone: '',
+        role: 'patient' as const,
         address: '',
         company: '',
         portfolio: '',
@@ -401,6 +496,33 @@ export default function ProfilePage() {
     } catch (error) {
       console.error("Skip onboarding error:", error)
     }
+  }
+
+  if (fetchError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
+            <AlertCircle className="h-12 w-12 text-destructive mx-auto mb-2" />
+            <CardTitle>Failed to Load Profile</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-center">
+            <p className="text-sm text-muted-foreground">{fetchError}</p>
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setFetchError(null)
+                setLoading(true)
+                window.location.reload()
+              }}
+              className="w-full"
+            >
+              Refresh Page
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
   }
 
   if (loading) {
@@ -571,19 +693,13 @@ export default function ProfilePage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="role">Role *</Label>
-                      <Select
-                        value={profileData.role || "patient"}
-                        onValueChange={(value: "patient" | "doctor") => handleInputChange("role", value)}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="patient">Patient</SelectItem>
-                          <SelectItem value="doctor">Doctor</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      <Label htmlFor="role">Role</Label>
+                      <div className="h-10 px-3 py-2 rounded-md border border-input bg-muted/50 text-sm font-medium flex items-center gap-2">
+                        <Badge variant={profileData.role === "doctor" ? "default" : "secondary"} className="capitalize">
+                          {profileData.role || "patient"}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground">(Read-only)</span>
+                      </div>
                     </div>
 
                     <div className="space-y-2">
@@ -616,19 +732,113 @@ export default function ProfilePage() {
                           </span>
                         )}
                       </div>
-                      <Input
-                        id="date_of_birth"
-                        type="date"
-                        value={profileData.date_of_birth || ""}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          handleInputChange("date_of_birth", val);
-                          const dynamicAge = calculateAge(val);
-                          if (dynamicAge !== null) {
-                            handleInputChange("age", dynamicAge);
-                          }
-                        }}
-                      />
+                      <Popover open={dobPickerOpen} onOpenChange={setDobPickerOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            id="date_of_birth"
+                            type="button"
+                            variant="outline"
+                            className={cn(
+                              "w-full justify-start text-left font-normal h-10 px-3 cursor-pointer",
+                              !profileData.date_of_birth && "text-muted-foreground"
+                            )}
+                          >
+                            <CalendarIcon className="mr-2 h-4 w-4" />
+                            {profileData.date_of_birth
+                              ? formatDisplayDate(profileData.date_of_birth)
+                              : <span>Pick a date of birth</span>
+                            }
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-3" align="start">
+                          <div className="flex items-center justify-between gap-2 pb-3 border-b mb-2">
+                            <Select
+                              value={String(pickerMonth.getMonth())}
+                              onValueChange={(val) => {
+                                const newM = new Date(pickerMonth);
+                                newM.setMonth(parseInt(val, 10));
+                                setPickerMonth(newM);
+                              }}
+                            >
+                              <SelectTrigger className="h-8 text-xs font-medium w-[110px]">
+                                <SelectValue placeholder="Month" />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-56">
+                                {[
+                                  "January", "February", "March", "April", "May", "June",
+                                  "July", "August", "September", "October", "November", "December"
+                                ].map((m, idx) => (
+                                  <SelectItem key={m} value={String(idx)} className="text-xs">
+                                    {m}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+
+                            <Select
+                              value={String(pickerMonth.getFullYear())}
+                              onValueChange={(val) => {
+                                const newM = new Date(pickerMonth);
+                                newM.setFullYear(parseInt(val, 10));
+                                setPickerMonth(newM);
+                              }}
+                            >
+                              <SelectTrigger className="h-8 text-xs font-medium w-[90px]">
+                                <SelectValue placeholder="Year" />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-56">
+                                {Array.from({ length: 2026 - 1920 + 1 }, (_, i) => 2026 - i).map((y) => (
+                                  <SelectItem key={y} value={String(y)} className="text-xs">
+                                    {y}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+
+                            {profileData.date_of_birth && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 text-xs text-muted-foreground hover:text-foreground px-2"
+                                onClick={() => {
+                                  handleInputChange("date_of_birth", "");
+                                  handleInputChange("age", "");
+                                  setDobPickerOpen(false);
+                                }}
+                              >
+                                Clear
+                              </Button>
+                            )}
+                          </div>
+                          <Calendar
+                            mode="single"
+                            month={pickerMonth}
+                            onMonthChange={setPickerMonth}
+                            selected={parsedDobDate}
+                            onSelect={(selectedDate) => {
+                              if (!selectedDate) return;
+                              const isoStr = formatLocalDateToISO(selectedDate);
+                              const todayISO = formatLocalDateToISO(new Date());
+                              if (isoStr > todayISO) {
+                                toast({
+                                  title: "Invalid Date",
+                                  description: "Date of Birth cannot be in the future.",
+                                  variant: "destructive"
+                                });
+                                return;
+                              }
+                              handleInputChange("date_of_birth", isoStr);
+                              const dynamicAge = calculateAge(isoStr);
+                              if (dynamicAge !== null) {
+                                handleInputChange("age", String(dynamicAge));
+                              }
+                              setDobPickerOpen(false);
+                            }}
+                            disabled={(date) => date > new Date()}
+                            initialFocus
+                          />
+                        </PopoverContent>
+                      </Popover>
                     </div>
 
                     <div className="space-y-2">
@@ -716,25 +926,7 @@ export default function ProfilePage() {
                       </div>
                     )}
 
-                    <div className="space-y-2">
-                      <Label htmlFor="portfolio">Portfolio/Website</Label>
-                      <Input
-                        id="portfolio"
-                        value={profileData.portfolio || ""}
-                        onChange={(e) => handleInputChange("portfolio", e.target.value)}
-                        placeholder="https://your-website.com"
-                      />
-                    </div>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="github">GitHub Profile</Label>
-                      <Input
-                        id="github"
-                        value={profileData.github || ""}
-                        onChange={(e) => handleInputChange("github", e.target.value)}
-                        placeholder="https://github.com/username"
-                      />
-                    </div>
 
                     <div className="space-y-2 md:col-span-2">
                       <Label htmlFor="about">About Me</Label>
@@ -806,7 +998,7 @@ export default function ProfilePage() {
                       {profileData.date_of_birth && (
                         <div className="flex items-center gap-3">
                           <User className="h-5 w-5 text-muted-foreground" />
-                          <span>Date of Birth: {profileData.date_of_birth}</span>
+                          <span>Date of Birth: {formatDisplayDate(profileData.date_of_birth)}</span>
                         </div>
                       )}
 
@@ -858,33 +1050,6 @@ export default function ProfilePage() {
                         </div>
                       )}
                       
-                      {profileData.portfolio && (
-                        <div className="flex items-center gap-3">
-                          <Globe className="h-5 w-5 text-muted-foreground" />
-                          <a 
-                            href={profileData.portfolio} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="text-primary hover:underline"
-                          >
-                            Portfolio
-                          </a>
-                        </div>
-                      )}
-                      
-                      {profileData.github && (
-                        <div className="flex items-center gap-3">
-                          <Github className="h-5 w-5 text-muted-foreground" />
-                          <a 
-                            href={profileData.github} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="text-primary hover:underline"
-                          >
-                            GitHub
-                          </a>
-                        </div>
-                      )}
                     </div>
                   </div>
 

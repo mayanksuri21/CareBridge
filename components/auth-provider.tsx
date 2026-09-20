@@ -27,6 +27,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const handleSession = async (currentSession: Session | null) => {
     setSession(currentSession)
     setUser(currentSession?.user ?? null)
+    setLoading(false)
 
     if (currentSession?.user) {
       try {
@@ -39,7 +40,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } else {
       setProfile(null)
     }
-    setLoading(false)
   }
 
   const refreshProfile = async () => {

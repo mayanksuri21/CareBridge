@@ -96,9 +96,9 @@ export default function PatientProfile() {
         role: existingRole
       }
 
-      if (existingProf?.date_of_birth) updatePayload.date_of_birth = existingProf.date_of_birth
-      if (existingProf?.age) updatePayload.age = existingProf.age
-      if (existingProf?.gender) updatePayload.gender = existingProf.gender
+      if ((existingProf as any)?.date_of_birth) updatePayload.date_of_birth = (existingProf as any).date_of_birth
+      if ((existingProf as any)?.age) updatePayload.age = (existingProf as any).age
+      if ((existingProf as any)?.gender) updatePayload.gender = (existingProf as any).gender
 
       let { error } = await supabase
         .from("profiles")

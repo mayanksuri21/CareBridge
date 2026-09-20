@@ -101,10 +101,10 @@ export default async function PatientDashboardPage() {
       const docName = doc?.name || rx.doctor_name || 'Rahul Sharma'
       const cleanDocName = docName.startsWith('Dr. ') ? docName.substring(4) : docName
 
-      const rawDob = profile?.date_of_birth
+      const rawDob = (profile as any)?.date_of_birth
       const dynamicAge = calculateAge(rawDob)
-      const patientAge = dynamicAge !== null ? dynamicAge : (profile?.age || '')
-      const patientGender = profile?.gender || ''
+      const patientAge = dynamicAge !== null ? dynamicAge : ((profile as any)?.age || '')
+      const patientGender = (profile as any)?.gender || ''
 
       return {
         id: rx.id,

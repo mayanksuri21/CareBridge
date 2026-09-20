@@ -234,7 +234,7 @@ export async function POST(request: Request) {
       scheduled_date: appointmentDate,
       scheduled_time: timeSlot,
       scheduled_at: `${appointmentDate} ${timeSlot}`,
-      reason: body.reason || "General Consultation",
+      reason: data?.reason || fullReason,
       symptoms: body.symptoms || "",
       status: "pending",
       call_active: false,

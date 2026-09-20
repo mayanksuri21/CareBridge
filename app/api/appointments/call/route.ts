@@ -64,7 +64,7 @@ export async function POST(request: Request) {
     let reasonText = currentAppt.reason || '';
     let statusText = currentAppt.status || 'booked';
 
-    const tags = ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]'];
+    const tags = ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]', '[PAYMENT_PAID]', '[PAYMENT_PENDING]', '[ARCHIVED_BY_DOCTOR]'];
     const removeTags = (text: string) => {
       let t = text;
       tags.forEach(tag => {
@@ -166,7 +166,7 @@ export async function GET(request: Request) {
       const isPendingApprovalTag = reasonStr.includes('[PENDING_APPROVAL]');
 
       let cleanReason = reasonStr;
-      ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]'].forEach(tag => {
+      ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]', '[PAYMENT_PAID]', '[PAYMENT_PENDING]', '[ARCHIVED_BY_DOCTOR]'].forEach(tag => {
         cleanReason = cleanReason.replace(` ${tag}`, '').replace(tag, '');
       });
 
