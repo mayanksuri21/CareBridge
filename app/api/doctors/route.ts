@@ -89,7 +89,7 @@ export async function GET(request: NextRequest) {
     }
 
     const formatted = (doctorsData || []).map((doc: any) => {
-      const activeSlots = doctorPresetsMap.get(doc.id) || [];
+      const activeSlots = doctorPresetsMap.get(doc.id) || ["10:30 AM", "12:00 PM", "02:00 PM"];
 
       return {
         id: doc.id,

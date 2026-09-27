@@ -132,7 +132,7 @@ export async function GET(request: NextRequest) {
     // 4. Default template match: Monday to Friday standard clinical hours
     if (dayOfWeek >= 1 && dayOfWeek <= 5) {
       const DEFAULT_WEEKDAY_SLOTS = [
-        "09:00 AM", "10:30 AM", "12:00 PM", "02:30 PM", "04:00 PM", "05:30 PM", "07:00 PM"
+        "10:30 AM", "12:00 PM", "02:00 PM"
       ];
       return NextResponse.json({ isLeave: false, slots: DEFAULT_WEEKDAY_SLOTS });
     }

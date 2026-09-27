@@ -55,17 +55,14 @@ export function PatientHistoryModal({ doctorId, patient }: PatientHistoryModalPr
       setIsLoading(true)
       setErrorMessage(null)
 
-      const startOfToday = new Date()
-      startOfToday.setHours(0, 0, 0, 0)
       const { data, error } = await supabase
         .from("appointments")
         .select(
-          "id, reason, status, schedule_slots!inner(start_time), prescriptions(note, prescription_items(medication_name, dosage, frequency, duration, instructions))",
+          "id, reason, status, created_at, schedule_slots(start_time), prescriptions(note, prescription_items(medication_name, dosage, frequency, duration, instructions))",
         )
         .eq("doctor_id", doctorId)
         .eq("patient_id", patient.id)
-        .lt("schedule_slots.start_time", startOfToday.toISOString())
-        .order("start_time", { referencedTable: "schedule_slots", ascending: false })
+        .order("created_at", { ascending: false })
 
       if (!isCurrentRequest) return
 
@@ -83,6 +80,22 @@ export function PatientHistoryModal({ doctorId, patient }: PatientHistoryModalPr
       isCurrentRequest = false
     }
   }, [doctorId, open, patient.id, supabase])
+
+  const cleanReasonDisplay = (reasonStr: string | null) => {
+    if (!reasonStr) return "General Consultation"
+    let clean = reasonStr
+    if (clean.includes("Selected Date:") || clean.includes("Symptoms:") || clean.includes("Preferred Date:")) {
+      const splitIdx = clean.search(/(Symptoms:|Preferred Date:|Selected Date:|Time Slot:)/i)
+      if (splitIdx !== -1) {
+        clean = clean.substring(0, splitIdx).trim()
+      }
+    }
+    ;['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]', '[PAYMENT_PAID]', '[PAYMENT_PENDING]', '[ARCHIVED_BY_DOCTOR]'].forEach((tag) => {
+      clean = clean.replace(` ${tag}`, '').replace(tag, '')
+    })
+    clean = clean.trim()
+    return clean || "General Consultation"
+  }
 
   return (
     <>
@@ -120,7 +133,7 @@ export function PatientHistoryModal({ doctorId, patient }: PatientHistoryModalPr
                   </time>
                   <p className="mt-2 text-sm text-muted-foreground">
                     <span className="font-medium text-foreground">Chief complaint: </span>
-                    {consultation.reason ?? "Not recorded"}
+                    {cleanReasonDisplay(consultation.reason)}
                   </p>
                   {consultation.prescriptions?.map((prescription, index) => (
                     <div key={`${consultation.id}-${index}`} className="mt-3 space-y-2 text-sm">

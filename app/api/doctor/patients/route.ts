@@ -56,26 +56,60 @@ export async function GET(request: Request) {
       });
     }
 
-    // 4. Group data per patient
+    // 4. Group data per patient (merge by email if present, else by patient_id)
     const patientMap: Record<string, any> = {};
+
+    const getPatientKey = (email: string | null | undefined, pid: string): string => {
+      if (email && typeof email === 'string' && email.trim() && email.toLowerCase() !== 'not provided' && email.includes('@')) {
+        return email.toLowerCase().trim();
+      }
+      return pid || 'unknown';
+    };
+
+    const extractCleanReason = (reasonStr?: string, symptomsStr?: string): string => {
+      let text = reasonStr || '';
+      if (text) {
+        ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]', '[PAYMENT_PAID]', '[PAYMENT_PENDING]', '[ARCHIVED_BY_DOCTOR]'].forEach(tag => {
+          text = text.replace(` ${tag}`, '').replace(tag, '');
+        });
+        text = text.replace(/\[[A-Z_]+\]/g, '').trim();
+
+        if (text.includes('Selected Date:')) text = text.split('Selected Date:')[0].trim();
+        if (text.includes('Preferred Date:')) text = text.split('Preferred Date:')[0].trim();
+        if (text.includes('Time Slot:')) text = text.split('Time Slot:')[0].trim();
+        text = text.replace(/^[|-]\s*/, '').replace(/\s*[|-]$/, '').trim();
+      }
+      if (text && text.toLowerCase() !== 'general consultation') {
+        return text;
+      }
+      if (symptomsStr && symptomsStr.trim()) {
+        return symptomsStr.trim();
+      }
+      return text || 'General Consultation';
+    };
 
     (appts || []).forEach(a => {
       const pid = a.patient_id || 'unknown';
       const prof = profilesMap[pid] || {};
       
       const slotData: any = a.schedule_slots;
-      const apptStartTime = (Array.isArray(slotData) ? slotData[0]?.start_time : slotData?.start_time) || a.scheduled_at || null;
+      const apptStartTime = (Array.isArray(slotData) ? slotData[0]?.start_time : slotData?.start_time) || a.scheduled_at || a.appointment_date || a.created_at;
+
+      const cleanApptReason = extractCleanReason(a.reason, a.symptoms);
+
       const formattedAppt = {
         ...a,
+        reason: cleanApptReason,
         scheduled_at: apptStartTime,
       };
 
       const resolvedName = prof.name || a.patient_name || 'Anonymous Patient';
       const resolvedEmail = prof.email || a.patient_email || 'Not provided';
       const resolvedPhone = prof.phone || a.phone || 'Not provided';
+      const key = getPatientKey(resolvedEmail, pid);
 
-      if (!patientMap[pid]) {
-        patientMap[pid] = {
+      if (!patientMap[key]) {
+        patientMap[key] = {
           patient_id: pid,
           name: resolvedName,
           email: resolvedEmail,
@@ -89,33 +123,34 @@ export async function GET(request: Request) {
           prescriptions: []
         };
       } else {
-        if (patientMap[pid].name === 'Anonymous Patient' && resolvedName !== 'Anonymous Patient') {
-          patientMap[pid].name = resolvedName;
+        if (patientMap[key].name === 'Anonymous Patient' && resolvedName !== 'Anonymous Patient') {
+          patientMap[key].name = resolvedName;
         }
-        if (patientMap[pid].email === 'Not provided' && resolvedEmail !== 'Not provided') {
-          patientMap[pid].email = resolvedEmail;
+        if (patientMap[key].email === 'Not provided' && resolvedEmail !== 'Not provided') {
+          patientMap[key].email = resolvedEmail;
         }
-        if (patientMap[pid].phone === 'Not provided' && resolvedPhone !== 'Not provided') {
-          patientMap[pid].phone = resolvedPhone;
+        if (patientMap[key].phone === 'Not provided' && resolvedPhone !== 'Not provided') {
+          patientMap[key].phone = resolvedPhone;
         }
       }
 
-      patientMap[pid].total_visits += 1;
-      patientMap[pid].appointments.push(formattedAppt);
+      patientMap[key].total_visits += 1;
+      patientMap[key].appointments.push(formattedAppt);
     });
 
     (prescriptions || []).forEach(p => {
       const pid = p.patient_id;
-      if (!pid) return;
 
-      const prof = profilesMap[pid] || {};
-      const resolvedName = prof.name || 'Anonymous Patient';
-      const resolvedEmail = prof.email || 'Not provided';
-      const resolvedPhone = prof.phone || 'Not provided';
+      const prof = (pid && profilesMap[pid]) ? profilesMap[pid] : {};
+      const resolvedName = prof.name || p.patient_name || 'Anonymous Patient';
+      const resolvedEmail = prof.email || p.patient_email || 'Not provided';
+      const resolvedPhone = prof.phone || p.patient_phone || 'Not provided';
 
-      if (!patientMap[pid]) {
-        patientMap[pid] = {
-          patient_id: pid,
+      const key = getPatientKey(resolvedEmail, pid || 'rx-patient');
+
+      if (!patientMap[key]) {
+        patientMap[key] = {
+          patient_id: pid || key,
           name: resolvedName,
           email: resolvedEmail,
           age: 'Not collected',
@@ -127,6 +162,11 @@ export async function GET(request: Request) {
           appointments: [],
           prescriptions: []
         };
+      }
+
+      // Avoid adding duplicate prescriptions if already present
+      if (patientMap[key].prescriptions.some((rx: any) => rx.id === p.id)) {
+        return;
       }
 
       let medicinesList = [];
@@ -149,8 +189,14 @@ export async function GET(request: Request) {
         const diagMatch = p.note.match(/Diagnosis:\s*([^\n\r]*)/i);
         if (diagMatch) diagnosis = diagMatch[1].trim();
       }
+      if (!diagnosis && p.appointment_id) {
+        const linkedAppt = (appts || []).find(a => a.id === p.appointment_id);
+        if (linkedAppt) {
+          diagnosis = extractCleanReason(linkedAppt.reason, linkedAppt.symptoms);
+        }
+      }
 
-      patientMap[pid].prescriptions.push({
+      patientMap[key].prescriptions.push({
         ...p,
         diagnosis: diagnosis || 'General Consultation',
         medicines: medicinesList,
@@ -161,16 +207,16 @@ export async function GET(request: Request) {
 
     let results = Object.values(patientMap);
 
-    // Sort patient history appointments descending by actual start_time (most recent first)
+    // Sort patient history appointments descending by actual scheduled_at/appointment_date/created_at (most recent first)
     results.forEach((p: any) => {
       p.appointments.sort((a: any, b: any) => {
-        const timeA = a.scheduled_at ? new Date(a.scheduled_at).getTime() : 0;
-        const timeB = b.scheduled_at ? new Date(b.scheduled_at).getTime() : 0;
+        const timeA = new Date(a.scheduled_at || a.appointment_date || a.created_at || 0).getTime();
+        const timeB = new Date(b.scheduled_at || b.appointment_date || b.created_at || 0).getTime();
         return timeB - timeA;
       });
       p.prescriptions.sort((a: any, b: any) => {
-        const timeA = new Date(a.created_at).getTime();
-        const timeB = new Date(b.created_at).getTime();
+        const timeA = new Date(a.created_at || 0).getTime();
+        const timeB = new Date(b.created_at || 0).getTime();
         return timeB - timeA;
       });
     });

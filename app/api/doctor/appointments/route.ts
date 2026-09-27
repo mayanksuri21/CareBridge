@@ -33,78 +33,49 @@ export async function GET(request: Request) {
       { auth: { persistSession: false } }
     );
 
-    // appointments has no date/time columns of its own — it references a real
-    // slot row via slot_id. Join schedule_slots to get start_time/end_time.
+    // appointments query with exact valid columns
     let query = supabase
       .from('appointments')
       .select(`
         id,
-        doctor_id,
         patient_id,
+        doctor_id,
         slot_id,
         status,
-        payment_status,
         reason,
         created_at,
+        patient_name,
+        patient_email,
+        phone,
+        doctor_name,
         appointment_date,
         time_slot,
+        scheduled_at,
+        symptoms,
         schedule_slots:slot_id (
           start_time,
           end_time
         ),
-        patient_name,
-        patient_email,
         patient:profiles!patient_id (
           id,
           name,
           email,
-          phone
+          phone,
+          age,
+          gender
         )
       `)
       .in('status', ['pending', 'booked', 'scheduled', 'cancelled'])
       .order('created_at', { ascending: false });
 
-    let data: any[] | null = null;
-    const primaryResult = await query;
-    if (primaryResult.error) {
-      console.warn("Primary doctor appointments query error (falling back without payment_status):", primaryResult.error.message);
-      let fallbackQuery = supabase
-        .from('appointments')
-        .select(`
-          id,
-          doctor_id,
-          patient_id,
-          slot_id,
-          status,
-          reason,
-          created_at,
-          appointment_date,
-          time_slot,
-          schedule_slots:slot_id (
-            start_time,
-            end_time
-          ),
-          patient_name,
-          patient_email,
-          patient:profiles!patient_id (
-            id,
-            name,
-            email,
-            phone
-          )
-        `)
-        .in('status', ['pending', 'booked', 'scheduled', 'cancelled'])
-        .order('created_at', { ascending: false });
+    if (doctorId) {
+      query = query.or(`doctor_id.eq.${doctorId},doctor_id.is.null`);
+    }
 
-      if (doctorId) {
-        fallbackQuery = fallbackQuery.or(`doctor_id.eq.${doctorId},doctor_id.is.null`);
-      }
-
-      const fallbackResult = await fallbackQuery;
-      if (fallbackResult.error) throw fallbackResult.error;
-      data = fallbackResult.data;
-    } else {
-      data = primaryResult.data;
+    const { data, error } = await query;
+    if (error) {
+      console.error("Doctor appointments query error:", error.message);
+      throw error;
     }
 
     const mapped = (data || []).map((appt: any) => {
@@ -144,22 +115,40 @@ export async function GET(request: Request) {
         statusVal = 'scheduled';
       }
 
-      // Prefer the real slot timestamp; fall back to parsing the reason text
-      // (kept for any older appointments created before this fix existed).
+      // Prefer the real slot timestamp; fall back to appointment_date / time_slot, then parse reason text
       let scheduledDate: string;
       let scheduledTime: string;
       if (appt.schedule_slots?.start_time) {
         scheduledDate = formatDate(appt.schedule_slots.start_time);
         scheduledTime = formatTime(appt.schedule_slots.start_time);
+      } else if (appt.appointment_date && appt.time_slot) {
+        scheduledDate = appt.appointment_date;
+        scheduledTime = appt.time_slot;
       } else {
         const dateMatch = cleanReason.match(/Selected Date:\s*([\w\d, -]+)/i) || cleanReason.match(/Preferred Date:\s*([\w\d, -]+)/i);
         const timeMatch = cleanReason.match(/Time Slot:\s*([\w\d: ]+)/i);
-        scheduledDate = dateMatch ? dateMatch[1].trim() : '17-08-2026';
-        scheduledTime = timeMatch ? timeMatch[1].trim() : '12:00 PM';
+        scheduledDate = dateMatch ? dateMatch[1].trim() : (appt.appointment_date || 'Today');
+        scheduledTime = timeMatch ? timeMatch[1].trim() : (appt.time_slot || '12:00 PM');
       }
 
-      const symptomsMatch = cleanReason.match(/Symptoms:\s*([\s\S]*)/i);
-      const symptomsText = symptomsMatch ? symptomsMatch[1].trim() : (appt.symptoms || '');
+      const symptomsMatch = reasonStr.match(/Symptoms:\s*([^|\-\n\r]*)/i) || reasonStr.match(/Symptoms:\s*([\s\S]*)/i);
+      let symptomsText = appt.symptoms || appt.patient_symptoms || appt.notes || appt.description || appt.details || appt.symptom || '';
+      if (!symptomsText && symptomsMatch && symptomsMatch[1]) {
+        symptomsText = symptomsMatch[1]
+          .replace(/(Selected Date:|Preferred Date:|Time Slot:|\[[A-Z_]+\]).*/gi, '')
+          .replace(/^[|-]\s*/, '')
+          .replace(/\s*[|-]$/, '')
+          .trim();
+      }
+
+      if (cleanReason.includes('Selected Date:')) cleanReason = cleanReason.split('Selected Date:')[0].trim();
+      if (cleanReason.includes('Preferred Date:')) cleanReason = cleanReason.split('Preferred Date:')[0].trim();
+      if (cleanReason.includes('Time Slot:')) cleanReason = cleanReason.split('Time Slot:')[0].trim();
+      if (cleanReason.includes('Symptoms:')) cleanReason = cleanReason.split('Symptoms:')[0].trim();
+      cleanReason = cleanReason.replace(/^[|-]\s*/, '').replace(/\s*[|-]$/, '').trim();
+      if (!cleanReason || cleanReason.toLowerCase() === 'general consultation') {
+        cleanReason = 'General Consultation';
+      }
 
       return {
         ...appt,

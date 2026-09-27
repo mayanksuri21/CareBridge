@@ -408,31 +408,20 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
     <div className="space-y-4">
       {/* Live Incoming Alert Banner */}
       {activeLiveAppt && (
-        <div className="p-4 rounded-2xl border border-emerald-500/60 flex flex-col sm:flex-row items-center justify-between gap-4 animate-in fade-in slide-in-from-bottom duration-300"
-          style={{
-            background: 'linear-gradient(135deg, rgba(6,95,70,0.5) 0%, rgba(15,23,42,0.8) 50%, rgba(6,95,70,0.5) 100%)',
-            boxShadow: '0 0 30px rgba(16,185,129,0.25), 0 0 60px rgba(16,185,129,0.12)',
-            animation: 'consultationPulse 2s ease-in-out infinite'
-          }}>
-          <style>{`
-            @keyframes consultationPulse {
-              0%, 100% { box-shadow: 0 0 30px rgba(16,185,129,0.25), 0 0 60px rgba(16,185,129,0.12); }
-              50% { box-shadow: 0 0 50px rgba(16,185,129,0.45), 0 0 100px rgba(16,185,129,0.2); }
-            }
-          `}</style>
+        <div className="p-4 rounded-2xl bg-emerald-500/10 dark:bg-emerald-950/40 border border-emerald-500/40 text-emerald-900 dark:text-emerald-100 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-md transition-all">
           <div className="flex items-center gap-3">
             <span className="relative flex h-3.5 w-3.5 shrink-0">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500"></span>
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-600"></span>
             </span>
             <div>
-              <h4 className="text-sm font-bold text-white">
-                🔴 {liveDoctorName} has started your consultation and is waiting in the room!
+              <h4 className="text-sm font-bold flex items-center gap-2">
+                <span>🔴</span> {liveDoctorName} has started your consultation and is waiting in the room!
               </h4>
             </div>
           </div>
           <Link href={`/consultation/${activeLiveAppt.id}`}>
-            <button className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs shadow-lg shadow-emerald-600/40 flex items-center gap-2 transition-all cursor-pointer animate-pulse shrink-0 border border-emerald-400">
+            <button className="px-5 py-2.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-md flex items-center gap-2 transition-all cursor-pointer animate-pulse shrink-0">
               <Video className="w-4 h-4" /> {activeLiveAppt.is_patient_admitted || activeLiveAppt.status === 'in_progress' ? 'Rejoin Now' : 'Join Now'}
             </button>
           </Link>
@@ -445,12 +434,12 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
         const date = appt.appointment_date || appt.scheduled_date || appt.scheduled_at?.split('T')?.[0] || 'Date';
         const time = appt.time_slot || appt.scheduled_time || '12:00 PM';
         return (
-          <div key={`alert-${appt.id}`} className="p-4 rounded-2xl bg-emerald-955/40 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
-            <span className="font-bold text-emerald-400 mr-1">✓ Approved:</span>
+          <div key={`alert-${appt.id}`} className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-800 dark:text-emerald-300 text-xs flex items-center gap-2">
+            <span className="font-bold text-emerald-700 dark:text-emerald-400 mr-1">✓ Approved:</span>
             Your consultation with Dr. {doctorName} for {date} {time} has been approved!
             <button
               onClick={() => handleDismissApproval(appt.id)}
-              className="ml-auto px-3 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 font-semibold transition-all cursor-pointer shrink-0"
+              className="ml-auto px-3 py-1 rounded-full bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-700 dark:text-emerald-300 font-semibold transition-all cursor-pointer shrink-0"
             >
               OK
             </button>
@@ -459,32 +448,32 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
       })}
 
       {/* View Filter Tabs: Active vs Consultation History */}
-      <div className="flex items-center gap-2 border-b border-slate-800/80 pb-3">
+      <div className="flex items-center gap-2 border-b border-border pb-3">
         <button
           type="button"
           onClick={() => setViewTab('active')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+          className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 cursor-pointer ${
             viewTab === 'active'
-              ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.15)]'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40 border border-transparent'
+              ? 'bg-teal-500/10 text-teal-700 dark:text-teal-400 border border-teal-500/30 shadow-xs'
+              : 'text-muted-foreground hover:text-foreground hover:bg-muted/50 border border-transparent'
           }`}
         >
           Active Consultations
-          <span className="px-2 py-0.5 rounded-full text-[10px] bg-slate-800 text-slate-300">
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-muted text-foreground">
             {activeConsultations.length}
           </span>
         </button>
         <button
           type="button"
           onClick={() => setViewTab('history')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+          className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 cursor-pointer ${
             viewTab === 'history'
-              ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.15)]'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40 border border-transparent'
+              ? 'bg-teal-500/10 text-teal-700 dark:text-teal-400 border border-teal-500/30 shadow-xs'
+              : 'text-muted-foreground hover:text-foreground hover:bg-muted/50 border border-transparent'
           }`}
         >
           Consultation History
-          <span className="px-2 py-0.5 rounded-full text-[10px] bg-slate-800 text-slate-300">
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-muted text-foreground">
             {historyConsultations.length}
           </span>
         </button>
@@ -492,7 +481,7 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
 
       {/* Appointment Cards */}
       {displayedAppointments.length === 0 ? (
-        <div className="text-center py-10 rounded-2xl bg-slate-900/40 border border-slate-800 text-slate-400 text-xs space-y-2">
+        <div className="text-center py-10 rounded-2xl bg-card border border-border text-muted-foreground text-xs space-y-2">
           {viewTab === 'active' ? (
             <>
               <p>No active or joinable consultations scheduled.</p>
@@ -500,7 +489,7 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
                 <button
                   type="button"
                   onClick={() => setViewTab('history')}
-                  className="text-emerald-400 hover:text-emerald-300 underline font-medium cursor-pointer"
+                  className="text-teal-600 hover:text-teal-700 dark:text-teal-400 underline font-medium cursor-pointer"
                 >
                   View past consultations in history ({historyConsultations.length}) →
                 </button>
@@ -511,7 +500,7 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
           )}
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-4">
           {displayedAppointments.map((appt) => {
             const isRejected = appt.status === 'rejected' || appt.status === 'declined' || appt.status === 'cancelled' || Boolean(appt.reason?.includes('Declined:'));
             const isCompleted = appt.status === 'completed';
@@ -553,105 +542,105 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
             return (
               <div
                 key={appt.id}
-                className={`p-5 rounded-2xl bg-slate-900/90 border transition-all ${isLive
-                  ? 'border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.15)]'
+                className={`p-5 rounded-2xl bg-card border transition-all ${isLive
+                  ? 'border-emerald-500/50 shadow-md ring-1 ring-emerald-500/30'
                   : isCompleted
-                    ? 'border-emerald-500/20 shadow-sm'
+                    ? 'border-emerald-500/20 shadow-xs'
                     : isRejected
-                      ? 'border-red-500/20 shadow-[0_0_15px_rgba(239,68,68,0.05)]'
+                      ? 'border-destructive/30 shadow-xs'
                       : isPending
-                        ? 'border-amber-500/20'
+                        ? 'border-amber-500/30'
                         : isMissed
-                          ? 'border-red-500/20 shadow-[0_0_15px_rgba(239,68,68,0.05)]'
-                          : 'border-slate-800'
+                          ? 'border-destructive/30 shadow-xs'
+                          : 'border-border hover:border-teal-500/50 hover:shadow-md'
                   }`}
               >
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                   <div className="space-y-2 flex-1">
                     <div className="flex flex-wrap items-center gap-2.5">
-                      <h4 className="font-bold text-slate-100 text-sm">{doctorName}</h4>
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-slate-800 text-emerald-400 border border-slate-700">
+                      <h4 className="font-semibold text-foreground text-sm">{doctorName}</h4>
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-teal-500/10 text-teal-700 dark:text-teal-400 border border-teal-500/20">
                         {department}
                       </span>
                       {isCompleted && (
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
                           ✓ Completed
                         </span>
                       )}
                       {isPending && (
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/10 text-amber-400 border border-amber-550/30 flex items-center gap-1">
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/30 flex items-center gap-1">
                           ⏳ Awaiting Doctor Approval
                         </span>
                       )}
                       {isMissed && (
-                        <span className="text-[11px] px-2.5 py-0.5 rounded-md bg-red-950/80 text-red-400 border border-red-800/60 uppercase font-semibold flex items-center gap-1">
+                        <span className="text-[11px] px-2.5 py-0.5 rounded-md bg-destructive/10 text-destructive border border-destructive/20 uppercase font-semibold flex items-center gap-1">
                           <XCircle className="w-3 h-3" /> ✕ Missed
                         </span>
                       )}
                       {isScheduled && !isLive && (
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-550/30 flex items-center gap-1">
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
                           <CheckCircle2 className="w-3 h-3" /> ✓ Confirmed & Scheduled
                         </span>
                       )}
                       {isLive && (
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-400/50 flex items-center gap-1.5 animate-pulse">
-                          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 border border-emerald-400/50 flex items-center gap-1.5 animate-pulse">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
                           🔴 Doctor In Room
                         </span>
                       )}
                       {isRejected && (
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-red-500/15 text-red-400 border border-red-500/30 flex items-center gap-1">
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-destructive/15 text-destructive border border-destructive/30 flex items-center gap-1">
                           ● Declined
                         </span>
                       )}
                     </div>
 
-                    <div className="flex items-center gap-4 text-xs text-slate-400">
+                    <div className="flex items-center gap-4 text-xs text-muted-foreground">
                       <span className="flex items-center gap-1.5">
-                        <Calendar className="w-3.5 h-3.5 text-slate-500" /> {date}
+                        <Calendar className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400" /> {date}
                       </span>
                       <span className="flex items-center gap-1.5">
-                        <Clock className="w-3.5 h-3.5 text-slate-500" /> {time}
+                        <Clock className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400" /> {time}
                       </span>
                     </div>
 
                     {isPending && (
-                      <p className="text-xs text-amber-300 bg-amber-950/20 p-2.5 rounded-xl border border-amber-900/30">
+                      <p className="text-xs text-amber-800 dark:text-amber-300 bg-amber-500/10 p-2.5 rounded-xl border border-amber-500/20">
                         Your consultation request has been sent. The doctor will review and approve your request.
                       </p>
                     )}
 
                     {isRejected && (
-                      <p className="text-xs text-red-300 bg-red-950/20 p-2.5 rounded-xl border border-red-900/30">
+                      <p className="text-xs text-destructive bg-destructive/10 p-2.5 rounded-xl border border-destructive/20">
                         Declined by Doctor — Reason: {declineReasonText}
                       </p>
                     )}
 
                     {isMissed && (
-                      <p className="text-xs text-red-300 bg-red-950/20 p-2.5 rounded-xl border border-red-900/30">
+                      <p className="text-xs text-destructive bg-destructive/10 p-2.5 rounded-xl border border-destructive/20">
                         You missed this consultation session. Please book a new slot if you still need medical assistance.
                       </p>
                     )}
                     {isScheduled && !isLive && appt.payment_status === 'paid' && (
-                      <p className="text-xs text-emerald-300 bg-emerald-955/30 p-2.5 rounded-xl border border-emerald-500/30 font-medium flex items-center gap-2">
-                        <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <p className="text-xs text-emerald-800 dark:text-emerald-300 bg-emerald-500/10 p-2.5 rounded-xl border border-emerald-500/30 font-medium flex items-center gap-2">
+                        <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                         Payment Successful! Please wait for {doctorName.startsWith('Dr.') ? doctorName : `Dr. ${doctorName}`} to start the consultation.
                       </p>
                     )}
                     {isScheduled && !isLive && appt.payment_status !== 'paid' && (
-                      <p className="text-xs text-slate-300 bg-slate-950/70 p-2.5 rounded-xl border border-slate-800/80">
+                      <p className="text-xs text-muted-foreground bg-muted/30 p-2.5 rounded-xl border border-border">
                         Your consultation is confirmed with {doctorName.startsWith('Dr.') ? doctorName : `Dr. ${doctorName}`} for {date} at {time}. Please complete payment to enable session start.
                       </p>
                     )}
                     {isLive && (
-                      <p className="text-xs text-emerald-300 bg-emerald-955/20 p-2.5 rounded-xl border border-emerald-800/40 font-semibold">
+                      <p className="text-xs text-emerald-800 dark:text-emerald-300 bg-emerald-500/15 p-2.5 rounded-xl border border-emerald-500/40 font-semibold">
                         {doctorName.startsWith('Dr.') ? doctorName : `Dr. ${doctorName}`} is currently in the room and waiting for you to join!
                       </p>
                     )}
 
                     {!isPending && !isRejected && !isMissed && !(isScheduled && !isLive) && !isLive && (
-                      <p className="text-xs text-slate-300 bg-slate-950/70 p-2.5 rounded-xl border border-slate-800/80">
-                        <strong className="text-slate-400">Reason:</strong> {appt.reason || 'General Consultation'}
+                      <p className="text-xs text-muted-foreground bg-muted/30 p-2.5 rounded-xl border border-border">
+                        <strong className="text-foreground">Reason:</strong> {appt.reason || 'General Consultation'}
                       </p>
                     )}
                   </div>
@@ -660,7 +649,7 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
                     {isCompleted ? (
                       <button
                         disabled
-                        className="w-full md:w-auto px-4 py-2 rounded-xl text-xs font-medium bg-emerald-955/40 text-emerald-400 border border-emerald-800/40 cursor-default flex items-center justify-center gap-2"
+                        className="w-full md:w-auto px-4 py-2 rounded-xl text-xs font-medium bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 cursor-default flex items-center justify-center gap-2"
                       >
                         <Check className="w-3.5 h-3.5" />
                         Completed
@@ -668,14 +657,14 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
                     ) : isRejected ? (
                       <button
                         onClick={() => handleRemoveDeclined(appt.id)}
-                        className="w-full md:w-auto px-4 py-2 rounded-xl text-xs font-semibold bg-red-950/40 hover:bg-red-900/40 text-red-400 border border-red-900/65 hover:text-red-300 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        className="w-full md:w-auto px-4 py-2 rounded-xl text-xs font-semibold bg-destructive/10 hover:bg-destructive/20 text-destructive border border-destructive/30 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                       >
                         Remove
                       </button>
                     ) : isMissed ? (
                       <button
                         disabled
-                        className="w-full md:w-auto px-4 py-2 rounded-xl text-xs font-medium bg-red-950/20 text-red-400 border border-red-900/40 cursor-not-allowed flex items-center justify-center gap-2"
+                        className="w-full md:w-auto px-4 py-2 rounded-xl text-xs font-medium bg-muted text-muted-foreground border border-border cursor-not-allowed flex items-center justify-center gap-2"
                       >
                         <XCircle className="w-3.5 h-3.5" />
                         Session Missed
@@ -683,20 +672,20 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
                     ) : isPending ? (
                       <button
                         disabled
-                        className="w-full md:w-auto px-4 py-2 rounded-xl text-xs font-medium bg-slate-950 text-slate-500 border border-slate-800 cursor-not-allowed flex items-center justify-center gap-2"
+                        className="w-full md:w-auto px-4 py-2 rounded-xl text-xs font-medium bg-muted text-muted-foreground border border-border cursor-not-allowed flex items-center justify-center gap-2"
                       >
                         <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
                         Waiting for doctor approval
                       </button>
                     ) : isLive ? (
                       <Link href={`/consultation/${appt.id}`} className="w-full md:w-auto block">
-                        <button className="w-full md:w-auto px-5 py-3 rounded-xl text-xs font-extrabold bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_20px_rgba(16,185,129,0.5)] animate-pulse flex items-center justify-center gap-2.5 transition-all cursor-pointer border-2 border-emerald-400 ring-2 ring-emerald-400/50">
+                        <button className="w-full md:w-auto px-5 py-3 rounded-full text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-md animate-pulse flex items-center justify-center gap-2.5 transition-all cursor-pointer border border-emerald-400">
                           <span className="relative flex h-3 w-3 shrink-0">
                             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
                             <span className="relative inline-flex rounded-full h-3 w-3 bg-white"></span>
                           </span>
                           <Video className="w-4 h-4 shrink-0" />
-                          <span className="whitespace-normal md:whitespace-nowrap font-black tracking-tight">
+                          <span className="whitespace-normal md:whitespace-nowrap font-bold tracking-tight">
                             {appt.is_patient_admitted || appt.status === 'in_progress' ? 'Rejoin Consultation →' : 'Join Consultation Room →'}
                           </span>
                         </button>
@@ -705,7 +694,7 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
                       <button
                         onClick={() => handlePayNow(appt)}
                         disabled={payingApptId === appt.id}
-                        className="w-full md:w-auto px-5 py-2.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all cursor-pointer border border-emerald-400"
+                        className="w-full md:w-auto px-5 py-2.5 rounded-full text-xs font-semibold bg-teal-600 hover:bg-teal-700 text-white shadow-md flex items-center justify-center gap-2 transition-all cursor-pointer"
                       >
                         <CreditCard className="w-4 h-4" />
                         {payingApptId === appt.id ? 'Opening Checkout...' : `Pay Now (₹${appt.doctor?.consultation_fee || 500})`}
@@ -713,9 +702,9 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
                     ) : (
                       <button
                         disabled
-                        className="w-full md:w-auto px-4 py-2.5 rounded-xl text-xs font-semibold bg-emerald-955/50 text-emerald-300 border border-emerald-500/40 cursor-not-allowed flex items-center justify-center gap-2"
+                        className="w-full md:w-auto px-4 py-2.5 rounded-xl text-xs font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 cursor-not-allowed flex items-center justify-center gap-2"
                       >
-                        <Check className="w-4 h-4 text-emerald-400" />
+                        <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                         <span>Payment Successful ✓ &middot; Waiting for doctor to start consultation</span>
                       </button>
                     )}

@@ -44,6 +44,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useAuth } from "@/components/auth-provider";
+import { Navbar } from "@/components/ui/navbar";
 
 type VerificationStatus = "pending" | "approved" | "rejected" | null;
 
@@ -73,13 +74,9 @@ const FALLBACK_SLOTS: Array<{
   minute: number;
   durationMin: number;
 }> = [
-  { label: "09:00 AM", hour: 9, minute: 0, durationMin: 45 },
   { label: "10:30 AM", hour: 10, minute: 30, durationMin: 45 },
   { label: "12:00 PM", hour: 12, minute: 0, durationMin: 45 },
-  { label: "02:30 PM", hour: 14, minute: 30, durationMin: 45 },
-  { label: "04:00 PM", hour: 16, minute: 0, durationMin: 45 },
-  { label: "05:30 PM", hour: 17, minute: 30, durationMin: 45 },
-  { label: "07:00 PM", hour: 19, minute: 0, durationMin: 45 },
+  { label: "02:00 PM", hour: 14, minute: 0, durationMin: 45 },
 ];
 
 function parseDateSafely(dateStr: string): Date | null {
@@ -275,7 +272,11 @@ export default function BookConsultationPage() {
     }
   }, [user?.id, supabase, name]);
 
-  // Check availability whenever selectedDate or selectedDoctor changes
+  const selectedDoctorData = useMemo(() => {
+    return doctors.find((d) => d.id === selectedDoctor) ?? null;
+  }, [doctors, selectedDoctor]);
+
+  // Check availability whenever selectedDate or selectedDoctor changes by fetching fresh doctor slots
   useEffect(() => {
     if (!selectedDate) {
       setDateSlots([]);
@@ -291,13 +292,67 @@ export default function BookConsultationPage() {
       setDateSlots([]);
       setIsLeave(true);
       setNoSlotsMessage("Doctor is available Monday to Friday only.");
-    } else {
-      // Weekday: Populate standard configured slots
-      setDateSlots(DEFAULT_SLOTS);
+      return;
+    }
+
+    if (!selectedDoctor) {
+      const doctorSlots = selectedDoctorData && Array.isArray(selectedDoctorData.active_slots) && selectedDoctorData.active_slots.length > 0
+        ? selectedDoctorData.active_slots
+        : ["10:30 AM", "12:00 PM", "02:00 PM"];
+      setDateSlots(doctorSlots);
       setIsLeave(false);
       setNoSlotsMessage("");
+      return;
     }
-  }, [selectedDate, selectedDoctor]);
+
+    let cancelled = false;
+    setDateSlotsLoading(true);
+
+    fetch(`/api/doctors/slots?doctorId=${selectedDoctor}&date=${selectedDate}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        if (data.isLeave) {
+          setDateSlots([]);
+          setIsLeave(true);
+          setNoSlotsMessage(data.message || "Doctor is on leave on this date.");
+        } else if (Array.isArray(data.slots)) {
+          setDateSlots(data.slots);
+          setIsLeave(false);
+          setNoSlotsMessage("");
+        } else {
+          const doctorSlots =
+            selectedDoctorData &&
+            Array.isArray(selectedDoctorData.active_slots) &&
+            selectedDoctorData.active_slots.length > 0
+              ? selectedDoctorData.active_slots
+              : ["10:30 AM", "12:00 PM", "02:00 PM"];
+          setDateSlots(doctorSlots);
+          setIsLeave(false);
+          setNoSlotsMessage("");
+        }
+      })
+      .catch((err) => {
+        console.error("Error fetching slots for date:", err);
+        if (cancelled) return;
+        const doctorSlots =
+          selectedDoctorData &&
+          Array.isArray(selectedDoctorData.active_slots) &&
+          selectedDoctorData.active_slots.length > 0
+            ? selectedDoctorData.active_slots
+            : ["10:30 AM", "12:00 PM", "02:00 PM"];
+        setDateSlots(doctorSlots);
+        setIsLeave(false);
+        setNoSlotsMessage("");
+      })
+      .finally(() => {
+        if (!cancelled) setDateSlotsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedDate, selectedDoctor, selectedDoctorData]);
 
   useEffect(() => {
     if (!selectedDoctor || !selectedDate) {
@@ -356,9 +411,6 @@ export default function BookConsultationPage() {
     const dd = String(d.getDate()).padStart(2, "0");
     return `${yyyy}-${mm}-${dd}`;
   }, []);
-
-  const selectedDoctorData =
-    doctors.find((d) => d.id === selectedDoctor) ?? null;
 
   const activeSlotsForSelectedDoctor = useMemo(() => {
     if (!selectedDoctorData) return [];
@@ -664,51 +716,64 @@ export default function BookConsultationPage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b border-border bg-card">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between space-x-4">
-            <div className="flex items-center space-x-4">
-              <Link href="/">
-                <Button variant="ghost" size="sm">
-                  <ArrowLeft className="w-4 h-4 mr-2" />
-                  Back to Home
+    <div className="min-h-screen bg-slate-50/60 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
+      <Navbar variant="patient" />
+      <div className="container mx-auto px-4 py-8 md:py-12">
+        <div className="max-w-4xl mx-auto space-y-8 animate-page">
+          {/* Header Title */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-sky-100 dark:border-slate-800 pb-6">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 text-xs font-semibold text-sky-700 dark:text-sky-400 uppercase tracking-wider">
+                <Stethoscope className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <span>Telehealth Appointment</span>
+              </div>
+              <h1 className="text-2xl md:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+                Book a Doctor Consultation
+              </h1>
+            </div>
+            <div className="flex items-center gap-2">
+              <Link href="/patient/dashboard">
+                <Button variant="outline" size="sm" className="rounded-xl border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 gap-2">
+                  <CalendarDays className="w-4 h-4 text-sky-600" /> Your History
                 </Button>
               </Link>
-              <div className="flex items-center space-x-2">
-                <Stethoscope className="w-5 h-5 text-primary" />
-                <h1 className="text-xl font-bold text-foreground">
-                  Book Appointment
-                </h1>
-              </div>
             </div>
-            <Link href="/patient/dashboard">
-              <Button variant="outline" size="sm">
-                <CalendarDays className="w-4 h-4 mr-2" /> My Dashboard
-              </Button>
-            </Link>
           </div>
-        </div>
-      </header>
 
-      <div className="container mx-auto px-4 py-8">
-        <div className="max-w-3xl mx-auto space-y-6">
           {booked ? (
-            <div className="p-8 text-center bg-slate-900 border border-amber-500/40 rounded-3xl space-y-4 shadow-2xl">
-              <div className="w-16 h-16 bg-amber-500/20 text-amber-400 rounded-full flex items-center justify-center mx-auto text-3xl animate-pulse font-bold">
-                ⏳
+            /* APPOINTMENT REQUEST SENT SCREEN (SECTION 11 & 4) */
+            <div className="p-8 md:p-12 text-center bg-white dark:bg-slate-900 border border-emerald-500/30 dark:border-emerald-500/20 rounded-3xl space-y-6 shadow-xl relative overflow-hidden animate-page">
+              <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
+              <div className="w-20 h-20 bg-emerald-100 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-400 rounded-full flex items-center justify-center mx-auto text-4xl shadow-md border border-emerald-200 dark:border-emerald-800/60 animate-bounce">
+                ✓
               </div>
-              <h3 className="text-lg font-bold text-white">Request Sent</h3>
-              <p className="text-xs text-slate-300">
-                Your consultation request has been sent to Dr.{" "}
-                {selectedDoctorData?.name || "Rahul Sharma"}.<br />
-                Waiting for doctor approval.
-              </p>
-              <Link href="/patient/dashboard">
-                <button className="px-6 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-955 font-bold rounded-xl text-xs transition-all cursor-pointer">
-                  Go to Dashboard →
-                </button>
-              </Link>
+              <div className="space-y-2 max-w-md mx-auto">
+                <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-widest bg-emerald-50 dark:bg-emerald-955/80 px-3 py-1 rounded-full border border-emerald-200 dark:border-emerald-800">
+                  Request Submitted
+                </span>
+                <h3 className="text-2xl font-bold text-slate-900 dark:text-white pt-2">
+                  Consultation Request Sent
+                </h3>
+                <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+                  Your request has been delivered to <strong className="text-slate-900 dark:text-white font-semibold">Dr. {selectedDoctorData?.name || "Rahul Sharma"}</strong>.
+                  <br />You will be notified once the doctor approves the consultation.
+                </p>
+              </div>
+              
+              <div className="pt-4 flex flex-col sm:flex-row items-center justify-center gap-3">
+                <Link href="/patient/dashboard" className="w-full sm:w-auto">
+                  <Button className="w-full sm:w-auto px-8 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-sm transition-all shadow-md shadow-emerald-600/20 cursor-pointer gap-2">
+                    Go to Your History →
+                  </Button>
+                </Link>
+                <Button
+                  variant="outline"
+                  onClick={resetForm}
+                  className="w-full sm:w-auto px-6 py-3 rounded-xl text-sm border-slate-200 dark:border-slate-800"
+                >
+                  Book Another Appointment
+                </Button>
+              </div>
             </div>
           ) : activeDoctorForDetails ? (
             <Card className="border-border shadow-xl">
@@ -1021,9 +1086,9 @@ export default function BookConsultationPage() {
 
                       {/* Selected Doctor Compact Display Card */}
                       {selectedDoctorData && !isDoctorDropdownOpen && (
-                        <div className="mt-3 p-3.5 rounded-xl border border-border bg-slate-900/60 dark:bg-slate-900/60 backdrop-blur-sm flex items-center justify-between gap-3 transition-all">
-                          <div className="flex items-center gap-3 min-w-0">
-                            <Avatar className="h-10 w-10 shrink-0 border-2 border-primary/20">
+                        <div className="mt-3 p-3.5 rounded-2xl border border-sky-200/90 bg-gradient-to-r from-sky-50/90 via-blue-50/60 to-white shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 transition-all">
+                          <div className="flex items-center gap-3.5 min-w-0">
+                            <Avatar className="h-11 w-11 shrink-0 border-2 border-sky-400/30 shadow-2xs">
                               {selectedDoctorData.avatar_url ? (
                                 <AvatarImage
                                   src={selectedDoctorData.avatar_url}
@@ -1031,7 +1096,7 @@ export default function BookConsultationPage() {
                                   className="object-cover"
                                 />
                               ) : null}
-                              <AvatarFallback className="bg-primary/20 text-primary font-bold text-xs">
+                              <AvatarFallback className="bg-sky-100 text-sky-700 font-bold text-xs">
                                 {selectedDoctorData.name
                                   ? selectedDoctorData.name.substring(0, 2).toUpperCase()
                                   : "DR"}
@@ -1040,34 +1105,39 @@ export default function BookConsultationPage() {
 
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-1.5 flex-wrap">
-                                <h4 className="font-semibold text-sm text-foreground truncate">
+                                <h4 className="font-bold text-sm text-slate-900 tracking-tight">
                                   Dr. {selectedDoctorData.name ?? "Unnamed"}
                                 </h4>
                                 {selectedDoctorData.verification_status === "approved" && (
                                   <Badge
                                     variant="outline"
-                                    className="text-[10px] py-0 px-1.5 font-medium border-emerald-500/40 bg-emerald-950/60 text-emerald-400 gap-1 shrink-0"
+                                    className="text-[10px] py-0.5 px-2 font-semibold border-emerald-300 bg-emerald-50/90 text-emerald-700 gap-1 shrink-0 rounded-full"
                                   >
-                                    <CheckCircle2 className="h-3 w-3" /> Verified
+                                    <CheckCircle2 className="h-3 w-3 text-emerald-600" /> Verified
                                   </Badge>
                                 )}
+                                <Badge variant="secondary" className="text-[10px] py-0.5 px-2 font-semibold bg-sky-100 text-sky-800 border border-sky-200/80 rounded-full">
+                                  Selected ✓
+                                </Badge>
                               </div>
-                              <p className="text-xs text-muted-foreground truncate mt-0.5">
+                              <p className="text-xs font-medium text-slate-600 truncate mt-0.5">
                                 {selectedDoctorData.specialty || "General Medicine"}
                               </p>
                             </div>
                           </div>
 
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => setActiveDoctorForDetails(selectedDoctorData)}
-                            className="shrink-0 text-xs font-medium gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700"
-                          >
-                            <Info className="h-3.5 w-3.5 text-primary" />
-                            Know More
-                          </Button>
+                          <div className="flex items-center gap-2 shrink-0 sm:self-center">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setActiveDoctorForDetails(selectedDoctorData)}
+                              className="shrink-0 text-xs font-semibold gap-1.5 bg-white hover:bg-sky-50 text-sky-700 border-sky-200 hover:border-sky-300 shadow-2xs rounded-xl h-8 px-3"
+                            >
+                              <Info className="h-3.5 w-3.5 text-sky-600" />
+                              Know More
+                            </Button>
+                          </div>
                         </div>
                       )}
                     </div>

@@ -116,62 +116,62 @@ export function LiveMetrics({
   }, [doctorId, supabase, refresh])
 
   return (
-    <section className="container mx-auto grid gap-4 px-4 pb-4 md:grid-cols-2 lg:grid-cols-4">
-      <Card className="transition-all duration-300 hover:shadow-md hover:-translate-y-0.5">
-        <CardContent className="p-6">
+    <section className="container mx-auto grid gap-4 px-4 md:px-6 pb-6 sm:grid-cols-2 lg:grid-cols-4 font-sans">
+      <Card className="bg-white border-sky-100 shadow-2xs rounded-2xl transition-all hover:shadow-xs hover:border-sky-200">
+        <CardContent className="p-5">
           <div className="flex items-start justify-between">
             <div>
-              <p className="text-sm font-medium text-muted-foreground">Total Appointments</p>
-              <p className="mt-2 text-3xl font-bold tracking-tight">{totalAppointments}</p>
-              <p className="mt-1 text-xs text-muted-foreground">All-time consultation count</p>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Appointments</p>
+              <p className="mt-2 text-3xl font-extrabold text-slate-900 tracking-tight">{totalAppointments}</p>
+              <p className="mt-1 text-[11px] text-slate-400 font-medium">All-time consultation count</p>
             </div>
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10">
-              <Users className="h-5 w-5 text-primary" />
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-sky-50 text-sky-600 border border-sky-100">
+              <Users className="h-5 w-5" />
             </div>
           </div>
         </CardContent>
       </Card>
 
-      <Card className="transition-all duration-300 hover:shadow-md hover:-translate-y-0.5">
-        <CardContent className="p-6">
+      <Card className="bg-white border-sky-100 shadow-2xs rounded-2xl transition-all hover:shadow-xs hover:border-sky-200">
+        <CardContent className="p-5">
           <div className="flex items-start justify-between">
             <div>
-              <p className="text-sm font-medium text-muted-foreground">Prescriptions Issued</p>
-              <p className="mt-2 text-3xl font-bold tracking-tight">{totalPrescriptions}</p>
-              <p className="mt-1 text-xs text-muted-foreground">Lifetime digital prescriptions</p>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Prescriptions Issued</p>
+              <p className="mt-2 text-3xl font-extrabold text-slate-900 tracking-tight">{totalPrescriptions}</p>
+              <p className="mt-1 text-[11px] text-slate-400 font-medium">Lifetime digital prescriptions</p>
             </div>
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-secondary/10">
-              <FileText className="h-5 w-5 text-secondary" />
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-teal-50 text-teal-600 border border-teal-100">
+              <FileText className="h-5 w-5" />
             </div>
           </div>
         </CardContent>
       </Card>
 
-      <Card className="transition-all duration-300 hover:shadow-md hover:-translate-y-0.5">
-        <CardContent className="p-6">
+      <Card className="bg-white border-sky-100 shadow-2xs rounded-2xl transition-all hover:shadow-xs hover:border-sky-200">
+        <CardContent className="p-5">
           <div className="flex items-start justify-between">
             <div>
-              <p className="text-sm font-medium text-muted-foreground">Today&apos;s Schedule</p>
-              <p className="mt-2 text-3xl font-bold tracking-tight">{todayAppointments}</p>
-              <p className="mt-1 text-xs text-muted-foreground">Appointments booked today</p>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Today&apos;s Schedule</p>
+              <p className="mt-2 text-3xl font-extrabold text-slate-900 tracking-tight">{todayAppointments}</p>
+              <p className="mt-1 text-[11px] text-slate-400 font-medium">Appointments booked today</p>
             </div>
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-accent/10">
-              <CalendarCheck className="h-5 w-5 text-accent" />
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100">
+              <CalendarCheck className="h-5 w-5" />
             </div>
           </div>
         </CardContent>
       </Card>
 
-      <Card className="transition-all duration-300 hover:shadow-md hover:-translate-y-0.5">
-        <CardContent className="p-6">
+      <Card className="bg-white border-sky-100 shadow-2xs rounded-2xl transition-all hover:shadow-xs hover:border-sky-200">
+        <CardContent className="p-5">
           <div className="flex items-start justify-between">
             <div>
-              <p className="text-sm font-medium text-muted-foreground">Completed Today</p>
-              <p className="mt-2 text-3xl font-bold tracking-tight">{todayCompleted}</p>
-              <p className="mt-1 text-xs text-muted-foreground">Consultations marked done</p>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Completed Today</p>
+              <p className="mt-2 text-3xl font-extrabold text-slate-900 tracking-tight">{todayCompleted}</p>
+              <p className="mt-1 text-[11px] text-slate-400 font-medium">Consultations marked done</p>
             </div>
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-500/10">
-              <ClipboardList className="h-5 w-5 text-emerald-600" />
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-100">
+              <ClipboardList className="h-5 w-5" />
             </div>
           </div>
         </CardContent>

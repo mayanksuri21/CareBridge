@@ -13,6 +13,7 @@ import { useAuth } from "@/components/auth-provider";
 import { toast } from "sonner";
 import { Room, RoomEvent, Track } from "livekit-client";
 import { calculateAge } from "@/lib/utils";
+import { Navbar } from "@/components/ui/navbar";
 
 type MedicineInput = {
   name: string;
@@ -1821,26 +1822,59 @@ export default function ConsultationRoom() {
   const computedAge = calculateAge(rawDob);
   const age = computedAge !== null ? computedAge : (appointment.patient?.age ?? null);
   const gender = appointment.patient?.gender || null;
-  const extractVisitReason = (text: string | null | undefined): string => {
-    if (!text) return '';
-    let clean = text.replace(/\[[A-Z_]+\]/g, '').trim();
-    if (clean.includes('Selected Date:')) {
-      clean = clean.split('Selected Date:')[0].trim();
+  const extractVisitReason = (appt: any): string => {
+    if (!appt) return '';
+    const candidates = [
+      appt.reason,
+      appt.raw_reason,
+      appt.reason_for_visit,
+      appt.patient_reason,
+      appt.visit_reason,
+      appt.symptoms,
+      appt.notes,
+    ];
+
+    for (const text of candidates) {
+      if (typeof text === 'string' && text.trim()) {
+        let clean = text;
+        ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]', '[PAYMENT_PAID]', '[PAYMENT_PENDING]', '[ARCHIVED_BY_DOCTOR]'].forEach(tag => {
+          clean = clean.replace(` ${tag}`, '').replace(tag, '');
+        });
+        clean = clean.replace(/\[[A-Z_]+\]/g, '').trim();
+
+        if (clean.includes('Selected Date:')) {
+          clean = clean.split('Selected Date:')[0].trim();
+        }
+        if (clean.includes('Preferred Date:')) {
+          clean = clean.split('Preferred Date:')[0].trim();
+        }
+        if (clean.includes('Time Slot:')) {
+          clean = clean.split('Time Slot:')[0].trim();
+        }
+        clean = clean.replace(/^[|-]\s*/, '').replace(/\s*[|-]$/, '').trim();
+        if (clean && clean.toLowerCase() !== 'general consultation') return clean;
+        if (clean) return clean;
+      }
     }
-    if (clean.includes('Time Slot:')) {
-      clean = clean.split('Time Slot:')[0].trim();
+    if (appt.symptoms && typeof appt.symptoms === 'string' && appt.symptoms.trim()) {
+      return appt.symptoms.trim();
     }
-    return clean;
+    return '';
   };
 
-  const rawCleanReason = extractVisitReason(appointment.reason || appointment.raw_reason);
-  const complaint = rawCleanReason || appointment.symptoms || 'General Consultation';
+  const rawCleanReason = extractVisitReason(appointment);
+  const complaint = (rawCleanReason && rawCleanReason.toLowerCase() !== 'general consultation')
+    ? rawCleanReason
+    : (appointment?.symptoms?.trim() || rawCleanReason || 'General Consultation');
   const symptoms = appointment.symptoms || '';
   const date = appointment.scheduled_date || appointment.appointment_date || '2026-08-17';
   const time = appointment.scheduled_time || appointment.time_slot || '12:00 PM';
 
   return (
     <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col font-sans overflow-y-auto">
+      {/* Consultation Room Variant Header */}
+      <Navbar variant="consultation" />
+
       {/* Audio render tag */}
       <audio ref={audioRef} autoPlay />
 

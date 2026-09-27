@@ -83,38 +83,18 @@ async function fetchTodayConsultations(doctorId: string): Promise<{
   const startOfTomorrow = new Date(startOfToday)
   startOfTomorrow.setDate(startOfTomorrow.getDate() + 1)
 
-  let data: any[] | null = null
-  const primaryResult = await supabase
+  const { data: rawData, error } = await supabase
     .from("appointments")
     .select(
-      "id, patient_id, reason, status, payment_status, schedule_slots!inner(start_time, end_time), patient:profiles!appointments_patient_id_fkey(id, name, email)",
+      "id, patient_id, reason, status, schedule_slots!inner(start_time, end_time), patient:profiles!appointments_patient_id_fkey(id, name, email)",
     )
     .eq("doctor_id", doctorId)
     .gte("schedule_slots.start_time", startOfToday.toISOString())
     .lt("schedule_slots.start_time", startOfTomorrow.toISOString())
     .order("start_time", { referencedTable: "schedule_slots", ascending: true })
 
-  let error = primaryResult.error
-  if (error) {
-    const fallback = await supabase
-      .from("appointments")
-      .select(
-        "id, patient_id, reason, status, schedule_slots!inner(start_time, end_time), patient:profiles!appointments_patient_id_fkey(id, name, email)",
-      )
-      .eq("doctor_id", doctorId)
-      .gte("schedule_slots.start_time", startOfToday.toISOString())
-      .lt("schedule_slots.start_time", startOfTomorrow.toISOString())
-      .order("start_time", { referencedTable: "schedule_slots", ascending: true })
-
-    if (fallback.data) {
-      data = fallback.data
-      error = null
-    }
-  } else {
-    data = primaryResult.data
-  }
-
   if (error) return { consultations: [], error }
+  const data = rawData
   const formatted = (data ?? []).map((appt: any) => {
     const reasonStr = appt.reason || '';
     const isPaid = appt.payment_status === 'paid' || reasonStr.includes('[PAYMENT_PAID]');
@@ -209,148 +189,137 @@ export function TodayConsultations({ doctorId, initialConsultations = [] }: Toda
     }
   }
 
+  const getInitials = (name?: string | null) => {
+    if (!name) return "PT"
+    const parts = name.trim().split(" ")
+    if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase()
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+  }
+
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <CalendarDays className="size-5 text-primary" />
-            <CardTitle>Today&apos;s Consultations</CardTitle>
+    <Card className="border-sky-100 shadow-2xs bg-white rounded-3xl overflow-hidden h-full flex flex-col justify-between">
+      <CardHeader className="bg-sky-50/50 border-b border-sky-100 p-5">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-teal-50 border border-teal-200 flex items-center justify-center shrink-0">
+              <CalendarDays className="h-4 w-4 text-teal-600" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-base font-extrabold text-slate-900 tracking-tight">
+                  Today&apos;s Consultations
+                </CardTitle>
+                <span className="text-[11px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200/80">
+                  {consultations.length} total
+                </span>
+              </div>
+            </div>
           </div>
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
             onClick={refresh}
             disabled={loading}
+            className="text-xs font-bold text-teal-700 hover:text-teal-800 hover:bg-teal-50 cursor-pointer gap-1"
           >
-            {loading ? "Refreshing..." : "Refresh"}
+            {loading ? "Refreshing..." : "Refresh →"}
           </Button>
         </div>
-        <CardDescription>
-          {error
-            ? "Today's consultation schedule could not be loaded."
-            : `Appointments scheduled for today (${consultations.length} total).`}
-        </CardDescription>
       </CardHeader>
-      <CardContent>
+
+      <CardContent className="p-5 flex-1">
         {!error && consultations.length === 0 ? (
-          <div className="flex flex-col items-center rounded-2xl border border-dashed border-border/80 bg-gradient-to-br from-muted/40 via-background to-muted/20 p-10 text-center">
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
-              <CalendarDays className="h-7 w-7 text-primary" />
-            </div>
-            <h3 className="text-base font-semibold text-foreground">No active consultations scheduled for today.</h3>
-            <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-              Share your booking link with patients so they can schedule a consultation at a time that suits them.
-            </p>
-            <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
-              <Button onClick={shareBookingLink} className="gap-2">
-                {copied ? <Check className="h-4 w-4" /> : <Link2 className="h-4 w-4" />}
-                {copied ? "Link Copied!" : "Share Booking Link"}
-              </Button>
-              <Button asChild variant="outline" className="gap-2">
-                <a
-                  href={`/consultation/book?doctor=${doctorId}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <Copy className="h-4 w-4" /> Open Booking Page
-                </a>
-              </Button>
-            </div>
+          <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 p-6 text-center text-xs text-slate-500 space-y-2">
+            <CalendarDays className="h-6 w-6 text-slate-400" />
+            <p className="font-semibold text-slate-700 text-xs">No consultations scheduled for today.</p>
+            <Button onClick={shareBookingLink} variant="link" size="sm" className="text-teal-600 font-bold text-xs p-0 h-auto">
+              {copied ? "Link Copied!" : "Share Booking Link →"}
+            </Button>
           </div>
         ) : (
-          <div className="rounded-lg border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Patient</TableHead>
-                  <TableHead>Time</TableHead>
-                  <TableHead>Chief Complaint</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {consultations.map((consultation) => {
-                  const patient = consultation.patient ?? {
-                    id: consultation.patient_id,
-                    name: null,
-                  }
-                  const canJoin = 
-                    consultation.status !== "completed" && 
-                    consultation.status !== "cancelled" && 
-                    consultation.status !== "declined" && 
-                    consultation.status !== "pending"
+          <div className="space-y-3">
+            {consultations.map((consultation) => {
+              const patient = consultation.patient ?? {
+                id: consultation.patient_id,
+                name: null,
+              }
+              const patientName = patient.name ?? "Unnamed patient"
+              const initials = getInitials(patientName)
+              const reasonTag = consultation.reason ?? "Consultation"
+              const isPaid = (consultation as any).payment_status === "paid"
+              const canJoin =
+                consultation.status !== "completed" &&
+                consultation.status !== "cancelled" &&
+                consultation.status !== "declined" &&
+                consultation.status !== "pending"
 
-                  return (
-                    <TableRow key={consultation.id}>
-                      <TableCell className="font-medium">
-                        <div>
-                          <div>{patient.name ?? "Unnamed patient"}</div>
-                          {patient.email && (
-                            <div className="text-xs text-muted-foreground">{patient.email}</div>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>{formatTimeSlot(consultation.schedule_slots)}</TableCell>
-                      <TableCell className="max-w-[220px] truncate text-sm text-muted-foreground">
-                        {consultation.reason ?? "—"}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-col gap-1 items-start">
-                          <Badge variant={statusVariant(consultation.status)}>
-                            {statusLabels[consultation.status] ?? consultation.status}
-                          </Badge>
-                          {(consultation as any).payment_status === "paid" ? (
-                            <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded flex items-center gap-1">
-                              <Check className="w-3 h-3 text-emerald-400" /> Payment Received ✓
-                            </span>
-                          ) : (
-                            <span className="text-[10px] font-medium text-amber-400 bg-amber-950/40 border border-amber-500/20 px-2 py-0.5 rounded">
-                              Payment Pending
-                            </span>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex justify-end gap-2">
-                          {canJoin && (
-                            (consultation as any).payment_status === "paid" ? (
-                              <Button
-                                size="sm"
-                                variant="default"
-                                className="gap-1.5 cursor-pointer bg-emerald-600 hover:bg-emerald-500"
-                                onClick={() => handleStartConsultation(consultation.id)}
-                              >
-                                <Video className="h-3.5 w-3.5" /> Join Video Call
-                              </Button>
-                            ) : (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled
-                                className="gap-1.5 cursor-not-allowed text-xs text-amber-400 border-amber-500/30 bg-amber-950/20"
-                              >
-                                Waiting for patient payment
-                              </Button>
-                            )
-                          )}
-                          <PatientHistoryModal doctorId={doctorId} patient={patient} />
-                          <PrescriptionModal
-                            appointmentId={consultation.id}
-                            doctorId={doctorId}
-                            patientId={patient.id}
-                            patientName={patient.name}
-                            initialChiefComplaint={consultation.reason}
-                            onSaved={refresh}
-                          />
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
+              let displayTime = "12:00 PM"
+              if (consultation.schedule_slots?.start_time) {
+                const d = new Date(consultation.schedule_slots.start_time)
+                if (!isNaN(d.getTime())) {
+                  displayTime = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                }
+              }
+
+              return (
+                <div
+                  key={consultation.id}
+                  className="bg-white border border-slate-200/90 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-all hover:border-teal-300/80 shadow-2xs"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-9 h-9 rounded-full bg-teal-100 text-teal-800 font-extrabold text-xs flex items-center justify-center shrink-0 border border-teal-200">
+                      {initials}
+                    </div>
+                    <div className="min-w-0 space-y-0.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-slate-900 text-xs truncate">{patientName}</span>
+                        {reasonTag && (
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-teal-50 text-teal-700 border border-teal-100 truncate max-w-[140px]">
+                            {reasonTag}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-slate-500 font-medium">
+                        {displayTime}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                    {isPaid ? (
+                      <span className="text-[10px] font-extrabold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
+                        <Check className="w-3 h-3 text-emerald-600" /> Paid
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                        Pending
+                      </span>
+                    )}
+
+                    {canJoin && isPaid ? (
+                      <Button
+                        size="sm"
+                        className="bg-[#00a86b] hover:bg-[#008f5b] text-white font-bold text-xs px-4 py-1.5 rounded-xl shadow-2xs cursor-pointer"
+                        onClick={() => handleStartConsultation(consultation.id)}
+                      >
+                        Join Consultation
+                      </Button>
+                    ) : (
+                      <PatientHistoryModal doctorId={doctorId} patient={patient} />
+                    )}
+
+                    <PrescriptionModal
+                      appointmentId={consultation.id}
+                      doctorId={doctorId}
+                      patientId={patient.id}
+                      patientName={patient.name}
+                      initialChiefComplaint={consultation.reason}
+                      onSaved={refresh}
+                    />
+                  </div>
+                </div>
+              )
+            })}
           </div>
         )}
       </CardContent>
