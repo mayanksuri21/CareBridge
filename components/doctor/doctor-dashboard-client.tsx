@@ -486,6 +486,7 @@ export function DoctorDashboardClient({
                   patientId={selectedPatient?.patient_id}
                   patientName={selectedPatient?.name}
                   triggerLabel="Quick Prescription"
+                  onSaved={() => searchPatients(patientQuery)}
                 />
               </div>
             </div>
@@ -751,53 +752,70 @@ export function DoctorDashboardClient({
                               Consultation History ({selectedPatient.appointments.length})
                             </h4>
                             <div className="space-y-2.5 max-h-[280px] overflow-y-auto pr-1">
-                              {selectedPatient.appointments.map((appt: any, idx: number) => {
-                                let displayDate = "Date unavailable"
-                                const rawDate = appt.scheduled_at || appt.appointment_date || appt.created_at
-                                if (rawDate) {
-                                  const dateObj = new Date(rawDate)
-                                  if (!isNaN(dateObj.getTime())) {
-                                    displayDate = dateObj.toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "numeric" })
+                              {selectedPatient.appointments.length === 0 ? (
+                                <p className="text-xs text-slate-400 py-4">No consultation history records found for this patient.</p>
+                              ) : (
+                                selectedPatient.appointments.map((appt: any, idx: number) => {
+                                  let displayDate = "Date unavailable"
+                                  let displayTime = ""
+                                  const rawDate = appt.scheduled_at || appt.appointment_date || appt.created_at
+                                  if (rawDate) {
+                                    const dateObj = new Date(rawDate)
+                                    if (!isNaN(dateObj.getTime())) {
+                                      displayDate = dateObj.toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" })
+                                      displayTime = dateObj.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true })
+                                    }
                                   }
-                                }
-                                const linkedRx = selectedPatient.prescriptions?.find((r: any) => r.appointment_id === appt.id)
-                                return (
-                                  <div key={idx} className="border border-slate-200/80 rounded-xl p-3 bg-slate-50/50 space-y-1.5 text-xs">
-                                    <div className="flex justify-between items-center">
-                                      <span className="font-bold text-[10px] text-slate-400">
-                                        {displayDate}
-                                      </span>
-                                      <Badge variant="outline" className="text-[9px] uppercase font-bold border-emerald-200 text-emerald-700 bg-emerald-50">
-                                        {appt.status}
-                                      </Badge>
+                                  const linkedRx = selectedPatient.prescriptions?.find((r: any) => r.appointment_id && r.appointment_id === appt.id)
+                                  return (
+                                    <div key={appt.id || idx} className="border border-slate-200/80 rounded-xl p-3 bg-slate-50/50 space-y-1.5 text-xs">
+                                      <div className="flex justify-between items-center">
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <span className="font-bold text-[10px] text-slate-500">
+                                            {displayDate}
+                                          </span>
+                                          {displayTime && (
+                                            <span className="text-[10px] text-slate-400 font-medium">
+                                              • {displayTime}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <Badge variant="outline" className="text-[9px] uppercase font-bold border-emerald-200 text-emerald-700 bg-emerald-50">
+                                          {appt.status || "Completed"}
+                                        </Badge>
+                                      </div>
+                                      <p className="text-slate-900 font-semibold">{appt.reason || "General Consultation"}</p>
+                                      {appt.symptoms && (
+                                        <p className="text-[10px] text-slate-500 bg-white p-1.5 rounded-lg border border-slate-100">
+                                          <span className="font-semibold text-slate-700">Symptoms:</span> {appt.symptoms}
+                                        </p>
+                                      )}
+
+                                      <div className="pt-2 border-t border-slate-100">
+                                        <span className="text-[10px] font-semibold text-slate-400 block mb-0.5">Prescription:</span>
+                                        {linkedRx ? (
+                                          <div className="flex items-center justify-between text-[10px]">
+                                            <span className="text-teal-700 font-bold flex items-center gap-1">
+                                              <FileText className="w-3 h-3 text-teal-600" /> ✓ Prescription Issued
+                                            </span>
+                                            <button
+                                              type="button"
+                                              onClick={() => window.open(`/prescription/${linkedRx.id}`, "_blank")}
+                                              className="text-teal-600 hover:underline font-bold flex items-center gap-0.5 cursor-pointer"
+                                            >
+                                              View Rx <ExternalLink className="w-2.5 h-2.5" />
+                                            </button>
+                                          </div>
+                                        ) : (
+                                          <div className="text-[10px] text-slate-500 font-medium">
+                                            No prescription issued
+                                          </div>
+                                        )}
+                                      </div>
                                     </div>
-                                    <p className="text-slate-900 font-semibold">{appt.reason || "General Consultation"}</p>
-                                    {appt.symptoms && (
-                                      <p className="text-[10px] text-slate-500 bg-white p-1.5 rounded-lg border border-slate-100">
-                                        <span className="font-semibold text-slate-700">Symptoms:</span> {appt.symptoms}
-                                      </p>
-                                    )}
-                                    {linkedRx ? (
-                                      <div className="pt-1.5 flex items-center justify-between border-t border-slate-100 text-[10px]">
-                                        <span className="text-teal-700 font-bold flex items-center gap-1">
-                                          <FileText className="w-3 h-3" /> Prescription Issued
-                                        </span>
-                                        <button
-                                          type="button"
-                                          onClick={() => window.open(`/prescription/${linkedRx.id}`, "_blank")}
-                                          className="text-teal-600 hover:underline font-bold flex items-center gap-0.5 cursor-pointer"
-                                        >
-                                          View Rx <ExternalLink className="w-2.5 h-2.5" />
-                                        </button>
-                                      </div>
-                                    ) : (
-                                      <div className="pt-1.5 border-t border-slate-100 text-[10px] text-slate-500 flex items-center gap-1">
-                                        <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Completed
-                                      </div>
-                                    )}
-                                  </div>
-                                )
-                              })}
+                                  )
+                                })
+                              )}
                             </div>
                           </div>
 

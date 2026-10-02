@@ -673,12 +673,6 @@ export default function BookConsultationPage() {
 
       console.log("[handleBook] response received", res.status);
 
-      // 409: another patient grabbed this slot between display and submission.
-      if (res.status === 409) {
-        toast.error("This slot is already booked. Please choose another time.");
-        return;
-      }
-
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
         throw new Error(errBody.error || `Server returned ${res.status}`);

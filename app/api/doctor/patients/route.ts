@@ -22,21 +22,30 @@ export async function GET(request: Request) {
 
     const supabase = getAdminClient();
 
-    // 1. Fetch appointments for this doctor including real schedule_slots start_time
+    // 1. Fetch appointments for this doctor including real schedule_slots start_time and end_time
     const { data: appts, error: apptErr } = await supabase
       .from('appointments')
-      .select('id, patient_id, patient_name, patient_email, phone, status, symptoms, reason, appointment_date, scheduled_at, created_at, slot_id, schedule_slots:slot_id(start_time)')
+      .select('id, patient_id, patient_name, patient_email, phone, status, symptoms, reason, appointment_date, scheduled_at, created_at, slot_id, schedule_slots:slot_id(start_time, end_time)')
       .eq('doctor_id', doctorId)
       .order('created_at', { ascending: false });
 
-    if (apptErr) throw apptErr;
+    if (apptErr) {
+      console.error('Doctor Patients API appointments fetch error:', apptErr);
+      throw apptErr;
+    }
 
-    // 2. Fetch prescriptions created by this doctor
-    const { data: prescriptions, error: prescErr } = await supabase
-      .from('prescriptions')
-      .select('*')
-      .eq('doctor_id', doctorId)
-      .order('created_at', { ascending: false });
+    // 2. Fetch prescriptions created by this doctor OR associated with any of this doctor's appointments
+    const apptIds = (appts || []).map(a => a.id).filter(Boolean);
+    let prescQuery = supabase.from('prescriptions').select('*');
+    if (apptIds.length > 0) {
+      prescQuery = prescQuery.or(`doctor_id.eq.${doctorId},appointment_id.in.(${apptIds.join(',')})`);
+    } else {
+      prescQuery = prescQuery.eq('doctor_id', doctorId);
+    }
+    const { data: prescriptions, error: prescErr } = await prescQuery.order('created_at', { ascending: false });
+    if (prescErr) {
+      console.error('Doctor Patients API prescriptions fetch error:', prescErr);
+    }
 
     // 3. Fetch patient profiles using valid existing columns
     const patientIds = Array.from(new Set([
@@ -55,6 +64,9 @@ export async function GET(request: Request) {
         profilesMap[p.id] = p;
       });
     }
+
+    // Map appointment ID -> patient key for accurate prescription linking
+    const apptToPatientKeyMap: Record<string, string> = {};
 
     // 4. Group data per patient (merge by email if present, else by patient_id)
     const patientMap: Record<string, any> = {};
@@ -108,6 +120,10 @@ export async function GET(request: Request) {
       const resolvedPhone = prof.phone || a.phone || 'Not provided';
       const key = getPatientKey(resolvedEmail, pid);
 
+      if (a.id) {
+        apptToPatientKeyMap[a.id] = key;
+      }
+
       if (!patientMap[key]) {
         patientMap[key] = {
           patient_id: pid,
@@ -134,23 +150,31 @@ export async function GET(request: Request) {
         }
       }
 
-      patientMap[key].total_visits += 1;
-      patientMap[key].appointments.push(formattedAppt);
+      // Add appointment if not already present
+      if (!patientMap[key].appointments.some((existing: any) => existing.id === a.id)) {
+        patientMap[key].appointments.push(formattedAppt);
+      }
     });
 
     (prescriptions || []).forEach(p => {
-      const pid = p.patient_id;
+      let key = p.appointment_id ? apptToPatientKeyMap[p.appointment_id] : null;
 
-      const prof = (pid && profilesMap[pid]) ? profilesMap[pid] : {};
-      const resolvedName = prof.name || p.patient_name || 'Anonymous Patient';
-      const resolvedEmail = prof.email || p.patient_email || 'Not provided';
-      const resolvedPhone = prof.phone || p.patient_phone || 'Not provided';
-
-      const key = getPatientKey(resolvedEmail, pid || 'rx-patient');
+      if (!key) {
+        const pid = p.patient_id;
+        const prof = (pid && profilesMap[pid]) ? profilesMap[pid] : {};
+        const resolvedEmail = prof.email || p.patient_email || 'Not provided';
+        key = getPatientKey(resolvedEmail, pid || 'rx-patient');
+      }
 
       if (!patientMap[key]) {
+        const pid = p.patient_id || key;
+        const prof = (pid && profilesMap[pid]) ? profilesMap[pid] : {};
+        const resolvedName = prof.name || p.patient_name || 'Anonymous Patient';
+        const resolvedEmail = prof.email || p.patient_email || 'Not provided';
+        const resolvedPhone = prof.phone || p.patient_phone || 'Not provided';
+
         patientMap[key] = {
-          patient_id: pid || key,
+          patient_id: pid,
           name: resolvedName,
           email: resolvedEmail,
           age: 'Not collected',
@@ -207,8 +231,9 @@ export async function GET(request: Request) {
 
     let results = Object.values(patientMap);
 
-    // Sort patient history appointments descending by actual scheduled_at/appointment_date/created_at (most recent first)
+    // Calculate total visits and sort patient history (newest consultation first)
     results.forEach((p: any) => {
+      p.total_visits = p.appointments.length;
       p.appointments.sort((a: any, b: any) => {
         const timeA = new Date(a.scheduled_at || a.appointment_date || a.created_at || 0).getTime();
         const timeB = new Date(b.scheduled_at || b.appointment_date || b.created_at || 0).getTime();

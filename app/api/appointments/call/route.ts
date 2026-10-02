@@ -64,7 +64,7 @@ export async function POST(request: Request) {
     let reasonText = currentAppt.reason || '';
     let statusText = currentAppt.status || 'booked';
 
-    const tags = ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]', '[PAYMENT_PAID]', '[PAYMENT_PENDING]', '[ARCHIVED_BY_DOCTOR]'];
+    const tags = ['[DOCTOR_IN_ROOM]', '[PATIENT_WAITING]', '[PATIENT_ADMITTED]', '[PATIENT_DECLINED]', '[CALL_ACTIVE]', '[PENDING_APPROVAL]', '[ARCHIVED_BY_DOCTOR]'];
     const removeTags = (text: string) => {
       let t = text;
       tags.forEach(tag => {
@@ -133,9 +133,9 @@ export async function POST(request: Request) {
       await releaseSlot(supabase, appointment_id);
     }
 
-    return NextResponse.json({ 
-      success: true, 
-      status: action === 'start' ? 'in_progress' : statusText, 
+    return NextResponse.json({
+      success: true,
+      status: action === 'start' ? 'in_progress' : statusText,
       reason: reasonText,
       appointment_id,
       roomId: appointment_id,
@@ -157,7 +157,7 @@ export async function GET(request: Request) {
     const mapAppointment = (appt: any) => {
       if (!appt) return null;
       const reasonStr = appt.reason || '';
-      
+
       const isDoctorInRoom = reasonStr.includes('[DOCTOR_IN_ROOM]');
       const isPatientWaiting = reasonStr.includes('[PATIENT_WAITING]');
       const isPatientAdmitted = reasonStr.includes('[PATIENT_ADMITTED]');
@@ -207,7 +207,7 @@ export async function GET(request: Request) {
 
     if (appointment_id) {
       let cleanId = appointment_id;
-      try { cleanId = decodeURIComponent(cleanId); } catch (_) {}
+      try { cleanId = decodeURIComponent(cleanId); } catch (_) { }
       cleanId = cleanId.trim().replace(/\s+/g, '-');
       const { data } = await supabase.from('appointments').select('*').eq('id', cleanId).maybeSingle();
       if (data?.patient_id) {

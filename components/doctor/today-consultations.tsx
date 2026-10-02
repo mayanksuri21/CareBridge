@@ -302,7 +302,7 @@ export function TodayConsultations({ doctorId, initialConsultations = [] }: Toda
                         className="bg-[#00a86b] hover:bg-[#008f5b] text-white font-bold text-xs px-4 py-1.5 rounded-xl shadow-2xs cursor-pointer"
                         onClick={() => handleStartConsultation(consultation.id)}
                       >
-                        Join Consultation
+                        {consultation.status === 'in_progress' || (consultation as any).call_active || (typeof (consultation.reason || '') === 'string' && ((consultation.reason || '').includes('[DOCTOR_IN_ROOM]') || (consultation.reason || '').includes('[CALL_ACTIVE]'))) ? "Rejoin Consultation" : "Start Consultation"}
                       </Button>
                     ) : (
                       <PatientHistoryModal doctorId={doctorId} patient={patient} />

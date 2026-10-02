@@ -48,9 +48,13 @@ export async function getPostLoginRedirect(userId: string): Promise<string> {
       .select('status')
       .eq('doctor_id', userId)
       .maybeSingle()
-    if (application?.status === 'approved') return '/doctor/dashboard'
-    if (application?.status === 'rejected') return '/doctor/verification-rejected'
-    return application ? '/doctor/verification-pending' : '/doctor-verification'
+
+    const appStatus = (application?.status || status.profile?.verification_status || 'approved') as string
+
+    if (appStatus === 'approved') return '/doctor/dashboard'
+    if (appStatus === 'rejected') return '/doctor/verification-rejected'
+    if (appStatus === 'pending') return '/doctor/verification-pending'
+    return '/doctor-verification'
   }
   return '/'
 }

@@ -50,7 +50,7 @@ export default function ConsultationRoom() {
     if (val) {
       try {
         val = decodeURIComponent(val);
-      } catch (_) {}
+      } catch (_) { }
       val = val.trim().replace(/\s+/g, '-');
     }
     return val;
@@ -226,7 +226,7 @@ export default function ConsultationRoom() {
   const loadAppointment = useCallback(async (retryCount = 0) => {
     let rawId = appointmentId || (typeof window !== 'undefined' ? window.location.pathname.split('/').filter(Boolean).pop() : '') || '';
     if (rawId) {
-      try { rawId = decodeURIComponent(rawId); } catch (_) {}
+      try { rawId = decodeURIComponent(rawId); } catch (_) { }
       rawId = rawId.trim().replace(/\s+/g, '-');
     }
     const effectiveId = rawId;
@@ -981,10 +981,10 @@ export default function ConsultationRoom() {
       if (vTrack && !isVideoOff) {
         const publishedVideoMap = (room.localParticipant as any).videoTrackPublications || room.localParticipant.trackPublications;
         const publishedVideo = publishedVideoMap ? (typeof publishedVideoMap.values === 'function' ? Array.from(publishedVideoMap.values()) : Array.from(publishedVideoMap)) : [];
-        const alreadyPublished = publishedVideo.some((pub: any) => 
-          pub.track === vTrack || 
-          pub.videoTrack === vTrack || 
-          pub.track?.mediaStreamTrack === vTrack || 
+        const alreadyPublished = publishedVideo.some((pub: any) =>
+          pub.track === vTrack ||
+          pub.videoTrack === vTrack ||
+          pub.track?.mediaStreamTrack === vTrack ||
           pub.videoTrack?.mediaStreamTrack === vTrack ||
           (pub as any).mediaStreamTrack === vTrack
         );
@@ -1004,10 +1004,10 @@ export default function ConsultationRoom() {
       if (aTrack && !isMuted) {
         const publishedAudioMap = (room.localParticipant as any).audioTrackPublications || room.localParticipant.trackPublications;
         const publishedAudio = publishedAudioMap ? (typeof publishedAudioMap.values === 'function' ? Array.from(publishedAudioMap.values()) : Array.from(publishedAudioMap)) : [];
-        const alreadyPublished = publishedAudio.some((pub: any) => 
-          pub.track === aTrack || 
-          pub.audioTrack === aTrack || 
-          pub.track?.mediaStreamTrack === aTrack || 
+        const alreadyPublished = publishedAudio.some((pub: any) =>
+          pub.track === aTrack ||
+          pub.audioTrack === aTrack ||
+          pub.track?.mediaStreamTrack === aTrack ||
           pub.audioTrack?.mediaStreamTrack === aTrack ||
           (pub as any).mediaStreamTrack === aTrack
         );
@@ -1328,6 +1328,17 @@ export default function ConsultationRoom() {
   const handleDoctorLeave = async () => {
     console.log("[handleDoctorLeave] Doctor leaving room temporarily for appointment:", roomId);
     setShowDoctorEndModal(false);
+    try {
+      const cleanId = (roomId || appointment?.id || '').trim();
+      if (cleanId) {
+        await fetch('/api/appointments/call', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ appointment_id: cleanId, action: 'leave_doctor' }),
+        }).catch((err) => console.warn("Failed to notify leave_doctor:", err));
+      }
+    } catch (_) { }
+
     try {
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());

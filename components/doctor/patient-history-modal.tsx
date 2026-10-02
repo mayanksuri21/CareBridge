@@ -1,9 +1,10 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { ClipboardList } from "lucide-react"
+import { ClipboardList, ExternalLink, FileText } from "lucide-react"
 
 import type { Patient } from "@/components/doctor/today-consultations"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Sheet,
@@ -14,24 +15,24 @@ import {
 } from "@/components/ui/sheet"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
 
-type PrescriptionItem = {
-  medication_name: string | null
-  dosage: string | null
-  frequency: string | null
-  duration: string | null
-  instructions: string | null
-}
-
 type PatientHistoryConsultation = {
   id: string
   reason: string | null
+  symptoms: string | null
   status: string
+  created_at: string
+  scheduled_at: string | null
   schedule_slots: {
     start_time: string
+    end_time?: string
   } | null
   prescriptions: Array<{
-    note: string | null
-    prescription_items: PrescriptionItem[] | null
+    id?: string
+    diagnosis?: string | null
+    medicines?: any
+    advice?: string | null
+    note?: string | null
+    created_at?: string
   }> | null
 }
 
@@ -58,7 +59,7 @@ export function PatientHistoryModal({ doctorId, patient }: PatientHistoryModalPr
       const { data, error } = await supabase
         .from("appointments")
         .select(
-          "id, reason, status, created_at, schedule_slots(start_time), prescriptions(note, prescription_items(medication_name, dosage, frequency, duration, instructions))",
+          "id, reason, symptoms, status, created_at, scheduled_at, schedule_slots(start_time, end_time), prescriptions(id, diagnosis, medicines, advice, note, created_at)",
         )
         .eq("doctor_id", doctorId)
         .eq("patient_id", patient.id)
@@ -67,6 +68,7 @@ export function PatientHistoryModal({ doctorId, patient }: PatientHistoryModalPr
       if (!isCurrentRequest) return
 
       if (error) {
+        console.error("PatientHistoryModal error fetching consultation history:", error)
         setHistory([])
         setErrorMessage("Unable to load consultation history. Please try again.")
       } else {
@@ -97,6 +99,21 @@ export function PatientHistoryModal({ doctorId, patient }: PatientHistoryModalPr
     return clean || "General Consultation"
   }
 
+  const parseMedicines = (rx: any) => {
+    if (!rx) return []
+    if (Array.isArray(rx.medicines)) return rx.medicines
+    if (typeof rx.medicines === "string") {
+      try { return JSON.parse(rx.medicines) } catch {}
+    }
+    if (rx.note) {
+      try {
+        const match = rx.note.match(/Medications:\s*(\[.*\])/i)
+        if (match) return JSON.parse(match[1])
+      } catch {}
+    }
+    return []
+  }
+
   return (
     <>
       <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
@@ -111,7 +128,7 @@ export function PatientHistoryModal({ doctorId, patient }: PatientHistoryModalPr
             </SheetDescription>
           </SheetHeader>
 
-          <div className="space-y-4 px-4 pb-6">
+          <div className="space-y-4 px-4 pb-6 mt-4">
             {isLoading ? (
               <p className="text-sm text-muted-foreground">Loading consultation history...</p>
             ) : errorMessage ? (
@@ -121,47 +138,84 @@ export function PatientHistoryModal({ doctorId, patient }: PatientHistoryModalPr
                 No previous consultation history found for this patient with you.
               </div>
             ) : (
-              history.map((consultation) => (
-                <article key={consultation.id} className="relative border-l pl-5 pb-5 last:pb-0">
-                  <ClipboardList className="absolute -left-2.5 top-0 size-5 rounded-full bg-background text-primary" />
-                  <time className="text-sm font-medium">
-                    {consultation.schedule_slots?.start_time
-                      ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(
-                          new Date(consultation.schedule_slots.start_time),
-                        )
-                      : "Date unavailable"}
-                  </time>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    <span className="font-medium text-foreground">Chief complaint: </span>
-                    {cleanReasonDisplay(consultation.reason)}
-                  </p>
-                  {consultation.prescriptions?.map((prescription, index) => (
-                    <div key={`${consultation.id}-${index}`} className="mt-3 space-y-2 text-sm">
-                      {prescription.note && (
-                        <p>
-                          <span className="font-medium">Doctor&apos;s notes: </span>
-                          {prescription.note}
-                        </p>
-                      )}
-                      {prescription.prescription_items?.length ? (
-                        <div>
-                          <p className="font-medium">Prescription</p>
-                          <ul className="mt-1 list-disc space-y-1 pl-5 text-muted-foreground">
-                            {prescription.prescription_items.map((item, itemIndex) => (
-                              <li key={`${consultation.id}-${index}-${itemIndex}`}>
-                                {[item.medication_name, item.dosage, item.frequency, item.duration]
-                                  .filter(Boolean)
-                                  .join(", ") || "Prescription details not recorded"}
-                                {item.instructions ? ` - ${item.instructions}` : ""}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      ) : null}
+              history.map((consultation) => {
+                const dateObj = new Date(consultation.schedule_slots?.start_time || consultation.scheduled_at || consultation.created_at)
+                const isValidDate = !isNaN(dateObj.getTime())
+                const displayDate = isValidDate
+                  ? dateObj.toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" })
+                  : "Date unavailable"
+                const displayTime = isValidDate
+                  ? dateObj.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true })
+                  : ""
+
+                const rx = consultation.prescriptions && consultation.prescriptions.length > 0 ? consultation.prescriptions[0] : null
+                const medicines = parseMedicines(rx)
+
+                return (
+                  <article key={consultation.id} className="relative border-l pl-5 pb-5 last:pb-0 space-y-2">
+                    <ClipboardList className="absolute -left-2.5 top-0 size-5 rounded-full bg-background text-primary" />
+                    
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 text-sm font-medium">
+                        <span>{displayDate}</span>
+                        {displayTime && <span className="text-xs text-muted-foreground">• {displayTime}</span>}
+                      </div>
+                      <Badge variant="outline" className="text-[10px] uppercase font-bold border-emerald-200 text-emerald-700 bg-emerald-50">
+                        {consultation.status || "Completed"}
+                      </Badge>
                     </div>
-                  ))}
-                </article>
-              ))
+
+                    <p className="text-sm font-semibold text-foreground">
+                      {cleanReasonDisplay(consultation.reason)}
+                    </p>
+
+                    {consultation.symptoms && (
+                      <p className="text-xs text-muted-foreground bg-slate-50 p-2 rounded-md border">
+                        <span className="font-medium text-foreground">Symptoms: </span>
+                        {consultation.symptoms}
+                      </p>
+                    )}
+
+                    <div className="pt-2 border-t text-xs">
+                      <span className="font-semibold text-muted-foreground block mb-1">Prescription:</span>
+                      {rx ? (
+                        <div className="space-y-1.5 bg-teal-50/60 p-2.5 rounded-lg border border-teal-100">
+                          <div className="flex items-center justify-between">
+                            <span className="text-teal-800 font-bold flex items-center gap-1">
+                              <FileText className="w-3.5 h-3.5 text-teal-600" /> ✓ Prescription Issued
+                            </span>
+                            {rx.id && (
+                              <button
+                                type="button"
+                                onClick={() => window.open(`/prescription/${rx.id}`, "_blank")}
+                                className="text-teal-700 hover:underline font-bold flex items-center gap-0.5 cursor-pointer text-[11px]"
+                              >
+                                View Rx <ExternalLink className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                          {rx.diagnosis && (
+                            <p className="text-slate-700">
+                              <span className="font-medium">Diagnosis: </span>{rx.diagnosis}
+                            </p>
+                          )}
+                          {medicines.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {medicines.map((m: any, idx: number) => (
+                                <span key={idx} className="text-[10px] bg-white text-teal-800 px-1.5 py-0.5 rounded border border-teal-200 font-medium">
+                                  {m.medication_name || m.name || m.medicineName} {m.dosage ? `(${m.dosage})` : ''}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="text-muted-foreground font-medium">No prescription issued</p>
+                      )}
+                    </div>
+                  </article>
+                )
+              })
             )}
           </div>
         </SheetContent>

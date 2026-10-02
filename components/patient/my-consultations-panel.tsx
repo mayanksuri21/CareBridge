@@ -394,14 +394,14 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
 
   const approvedConsultations = appointments.filter(
     a => (a.status === 'scheduled' || a.status === 'booked' || a.status === 'confirmed') &&
-         !a.call_active &&
-         !a.is_doctor_in_room &&
-         a.status !== 'declined' &&
-         a.status !== 'cancelled' &&
-         a.status !== 'missed' &&
-         !a.reason?.includes('Declined:') &&
-         !dismissedApprovals.has(a.id) &&
-         !isConsultationPast(a)
+      !a.call_active &&
+      !a.is_doctor_in_room &&
+      a.status !== 'declined' &&
+      a.status !== 'cancelled' &&
+      a.status !== 'missed' &&
+      !a.reason?.includes('Declined:') &&
+      !dismissedApprovals.has(a.id) &&
+      !isConsultationPast(a)
   );
 
   return (
@@ -452,11 +452,10 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
         <button
           type="button"
           onClick={() => setViewTab('active')}
-          className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 cursor-pointer ${
-            viewTab === 'active'
+          className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 cursor-pointer ${viewTab === 'active'
               ? 'bg-teal-500/10 text-teal-700 dark:text-teal-400 border border-teal-500/30 shadow-xs'
               : 'text-muted-foreground hover:text-foreground hover:bg-muted/50 border border-transparent'
-          }`}
+            }`}
         >
           Active Consultations
           <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-muted text-foreground">
@@ -466,11 +465,10 @@ export function MyConsultationsPanel({ patientId }: { patientId?: string }) {
         <button
           type="button"
           onClick={() => setViewTab('history')}
-          className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 cursor-pointer ${
-            viewTab === 'history'
+          className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 cursor-pointer ${viewTab === 'history'
               ? 'bg-teal-500/10 text-teal-700 dark:text-teal-400 border border-teal-500/30 shadow-xs'
               : 'text-muted-foreground hover:text-foreground hover:bg-muted/50 border border-transparent'
-          }`}
+            }`}
         >
           Consultation History
           <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-muted text-foreground">

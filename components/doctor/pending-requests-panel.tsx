@@ -39,7 +39,7 @@ function formatAgeGender(req: any): string {
         }
         age = calculated > 0 ? calculated : null;
       }
-    } catch {}
+    } catch { }
   }
 
   let gender: string | null = req.patient_gender || req.gender || req.patient?.gender || null;
@@ -92,7 +92,7 @@ function isConsultationPast(appt: any): boolean {
       const now = new Date();
       return now.getTime() > scheduledDateTime.getTime() + 30 * 60 * 1000;
     }
-  } catch {}
+  } catch { }
   return false;
 }
 
@@ -183,8 +183,8 @@ export function PendingRequestsPanel({
         const isPendingApproval = reasonStr.includes('[PENDING_APPROVAL]');
 
         const isPaid = appt.payment_status === 'paid' ||
-                       appt.payment_status === 'completed' ||
-                       reasonStr.includes('[PAYMENT_PAID]');
+          appt.payment_status === 'completed' ||
+          reasonStr.includes('[PAYMENT_PAID]');
 
         const paymentStatus = isPaid ? 'paid' : 'pending';
 
